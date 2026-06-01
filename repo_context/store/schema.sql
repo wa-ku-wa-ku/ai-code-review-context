@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS review_tasks (
 CREATE TABLE IF NOT EXISTS context_usage (
     repo_id TEXT NOT NULL,
     usage_id TEXT NOT NULL,
+    task_id TEXT,
+    tool_name TEXT NOT NULL,
     node_id TEXT,
-    usage_type TEXT NOT NULL,
-    created_at TEXT NOT NULL,
+    file_path TEXT,
+    used_at TEXT NOT NULL,
     PRIMARY KEY (repo_id, usage_id)
 );

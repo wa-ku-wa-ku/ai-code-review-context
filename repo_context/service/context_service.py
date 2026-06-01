@@ -1,8 +1,9 @@
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from repo_context.store.models import CodeEdge, CodeNode
+from repo_context.store.models import CodeEdge, CodeNode, ContextUsage
 from repo_context.store.sqlite_store import SQLiteStore
 
 
@@ -31,10 +32,17 @@ class ContextService:
         self,
         node_id: str,
         include_source: bool = False,
+        task_id: str | None = None,
     ) -> dict[str, Any] | None:
         node = self.store.get_code_node(self.repo_id, node_id)
         if node is None:
             return None
+        self._record_usage(
+            tool_name="get_node_detail",
+            task_id=task_id,
+            node_id=node.node_id,
+            file_path=node.file_path,
+        )
 
         detail = self._node_detail(node)
         if include_source:
@@ -42,6 +50,7 @@ class ContextService:
                 node.file_path,
                 node.start_line,
                 node.end_line,
+                task_id=task_id,
             )["source"]
         return detail
 
@@ -50,6 +59,7 @@ class ContextService:
         file_path: str,
         start_line: int,
         end_line: int,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         """读取仓库内源码片段，明确阻止仓库外路径。"""
         if start_line < 1 or end_line < start_line:
@@ -61,10 +71,17 @@ class ContextService:
         if not source_path.is_file():
             raise FileNotFoundError(f"File not found in repository: {file_path}")
 
+        normalized_file_path = Path(file_path).as_posix()
+        self._record_usage(
+            tool_name="get_file_snippet",
+            task_id=task_id,
+            node_id=None,
+            file_path=normalized_file_path,
+        )
         lines = source_path.read_text(encoding="utf-8").splitlines()
         selected = lines[start_line - 1 : end_line]
         return {
-            "file_path": Path(file_path).as_posix(),
+            "file_path": normalized_file_path,
             "start_line": start_line,
             "end_line": min(end_line, len(lines)),
             "source": "\n".join(selected),
@@ -249,3 +266,25 @@ class ContextService:
             "target_node_id": edge.target_node_id,
             "edge_type": edge.edge_type,
         }
+
+    def _record_usage(
+        self,
+        tool_name: str,
+        task_id: str | None,
+        node_id: str | None,
+        file_path: str | None,
+    ) -> None:
+        """记录工具实际访问过的节点或文件，用于阶段 7 覆盖率统计。"""
+        existing_count = len(self.store.list_context_usage(self.repo_id))
+        used_at = datetime.now(timezone.utc).isoformat()
+        self.store.insert_context_usage(
+            ContextUsage(
+                repo_id=self.repo_id,
+                usage_id=f"usage_{existing_count + 1:06d}",
+                task_id=task_id,
+                tool_name=tool_name,
+                node_id=node_id,
+                file_path=file_path,
+                used_at=used_at,
+            )
+        )

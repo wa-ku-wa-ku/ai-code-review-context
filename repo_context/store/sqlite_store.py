@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
-from repo_context.store.models import CodeEdge, CodeFile, CodeNode
+from repo_context.store.models import CodeEdge, CodeFile, CodeNode, ContextUsage
 
 
 class SQLiteStore:
@@ -118,6 +118,38 @@ class SQLiteStore:
             ).fetchall()
         return [self._row_to_code_file(row) for row in rows]
 
+    def insert_context_usage(self, usage: ContextUsage) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO context_usage (
+                    repo_id, usage_id, task_id, tool_name, node_id, file_path, used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    usage.repo_id,
+                    usage.usage_id,
+                    usage.task_id,
+                    usage.tool_name,
+                    usage.node_id,
+                    usage.file_path,
+                    usage.used_at,
+                ),
+            )
+
+    def list_context_usage(self, repo_id: str) -> list[ContextUsage]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT repo_id, usage_id, task_id, tool_name, node_id, file_path, used_at
+                FROM context_usage
+                WHERE repo_id = ?
+                ORDER BY used_at, usage_id
+                """,
+                (repo_id,),
+            ).fetchall()
+        return [self._row_to_context_usage(row) for row in rows]
+
     def get_code_file(self, repo_id: str, file_path: str) -> CodeFile | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -195,4 +227,16 @@ class SQLiteStore:
             source_node_id=row["source_node_id"],
             target_node_id=row["target_node_id"],
             edge_type=row["edge_type"],
+        )
+
+    @staticmethod
+    def _row_to_context_usage(row: sqlite3.Row) -> ContextUsage:
+        return ContextUsage(
+            repo_id=row["repo_id"],
+            usage_id=row["usage_id"],
+            task_id=row["task_id"],
+            tool_name=row["tool_name"],
+            node_id=row["node_id"],
+            file_path=row["file_path"],
+            used_at=row["used_at"],
         )

@@ -8,9 +8,11 @@ def get_file_snippet(
     file_path: str,
     start_line: int,
     end_line: int,
+    task_id: str | None = None,
 ) -> dict[str, Any]:
     return service.get_file_snippet(
         file_path=file_path,
         start_line=start_line,
         end_line=end_line,
+        task_id=task_id,
     )

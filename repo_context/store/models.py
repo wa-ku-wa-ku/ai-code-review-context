@@ -45,6 +45,8 @@ class ReviewTask:
 class ContextUsage:
     repo_id: str
     usage_id: str
+    task_id: str | None
+    tool_name: str
     node_id: str | None
-    usage_type: str
-    created_at: str
+    file_path: str | None
+    used_at: str

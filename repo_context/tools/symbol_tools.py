@@ -15,5 +15,10 @@ def get_node_detail(
     service: ContextService,
     node_id: str,
     include_source: bool = False,
+    task_id: str | None = None,
 ) -> dict[str, Any] | None:
-    return service.get_node_detail(node_id=node_id, include_source=include_source)
+    return service.get_node_detail(
+        node_id=node_id,
+        include_source=include_source,
+        task_id=task_id,
+    )
