@@ -1,0 +1,271 @@
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from repo_context.service.context_service import ContextService
+from repo_context.store.models import CodeFile, CodeNode
+
+
+IMPORTANT_DIRS = {"services", "repositories", "utils", "models", "schemas", "core"}
+CONFIG_NAMES = {"config.py", "settings.py", "database.py", "security.py", ".env.example"}
+AUTH_KEYWORDS = {"auth", "login", "token", "password", "authenticate"}
+
+
+@dataclass(frozen=True)
+class RepoSummary:
+    repo_id: str
+    framework: str
+    python_files: int
+    entrypoints: list[dict[str, str]]
+    test_files: list[str]
+    config_files: list[str]
+    main_packages: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TaskCard:
+    task_id: str
+    repo_id: str
+    task_type: str
+    target: str
+    seed_node_id: str
+    priority: str
+    review_focus: list[str]
+    related_files: list[str]
+    status: str = "pending"
+    recommended_nodes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ReviewTaskPlan:
+    repo_summary: RepoSummary
+    review_tasks: list[TaskCard]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repo_summary": self.repo_summary.to_dict(),
+            "review_tasks": [task.to_dict() for task in self.review_tasks],
+        }
+
+
+class ReviewTaskGenerator:
+    def __init__(self, context_service: ContextService) -> None:
+        self.context_service = context_service
+
+    def generate(self) -> ReviewTaskPlan:
+        """基于索引确定性生成评审任务，不调用模型服务。"""
+        files = self.context_service.store.list_code_files(self.context_service.repo_id)
+        nodes = self.context_service.store.list_code_nodes(self.context_service.repo_id)
+        repo_summary = self._build_repo_summary(files, nodes)
+        tasks = [
+            *self._entrypoint_tasks(nodes),
+            *self._config_tasks(files, nodes),
+            *self._module_tasks(files, nodes),
+        ]
+        return ReviewTaskPlan(repo_summary=repo_summary, review_tasks=tasks)
+
+    def get_related_context(self, task_id: str) -> dict[str, Any]:
+        """按 task_id 返回推荐上下文目标，不默认返回大段源码。"""
+        plan = self.generate()
+        task = next((item for item in plan.review_tasks if item.task_id == task_id), None)
+        if task is None:
+            return {
+                "task_id": task_id,
+                "seed_node_id": None,
+                "recommended_nodes": [],
+                "related_files": [],
+            }
+
+        recommended = [
+            self.context_service.get_node_detail(node_id, include_source=False)
+            for node_id in task.recommended_nodes
+        ]
+        return {
+            "task_id": task.task_id,
+            "seed_node_id": task.seed_node_id,
+            "recommended_nodes": [item for item in recommended if item is not None],
+            "related_files": task.related_files,
+        }
+
+    def _build_repo_summary(
+        self,
+        files: list[CodeFile],
+        nodes: list[CodeNode],
+    ) -> RepoSummary:
+        route_nodes = [node for node in nodes if node.type == "route"]
+        return RepoSummary(
+            repo_id=self.context_service.repo_id,
+            framework=_detect_framework(route_nodes),
+            python_files=sum(1 for item in files if item.language == "python"),
+            entrypoints=[
+                {
+                    "method_path": node.name,
+                    "node_id": node.node_id,
+                    "file_path": node.file_path,
+                }
+                for node in route_nodes
+            ],
+            test_files=[item.file_path for item in files if item.is_test],
+            config_files=[item.file_path for item in files if _is_config_file(item)],
+            main_packages=sorted(
+                {
+                    Path(item.file_path).parts[0]
+                    for item in files
+                    if len(Path(item.file_path).parts) > 1
+                    and not item.file_path.startswith("tests/")
+                }
+            ),
+        )
+
+    def _entrypoint_tasks(self, nodes: list[CodeNode]) -> list[TaskCard]:
+        tasks: list[TaskCard] = []
+        route_nodes = [node for node in nodes if node.type == "route"]
+
+        for route_node in route_nodes:
+            related = self.context_service.explore_related_symbols(route_node.node_id)
+            recommended_nodes = [
+                node["node_id"]
+                for node in related["nodes"]
+                if isinstance(node.get("node_id"), str)
+            ]
+            task_id = f"task_route_{_slug(route_node.name)}"
+            tasks.append(
+                TaskCard(
+                    task_id=task_id,
+                    repo_id=self.context_service.repo_id,
+                    task_type="entrypoint_review",
+                    target=route_node.name,
+                    seed_node_id=route_node.node_id,
+                    priority="high",
+                    review_focus=_focus_for_target(route_node.name),
+                    related_files=sorted(
+                        {
+                            route_node.file_path,
+                            *[
+                                node["file_path"]
+                                for node in related["nodes"]
+                                if isinstance(node.get("file_path"), str)
+                            ],
+                        }
+                    ),
+                    recommended_nodes=[route_node.node_id, *recommended_nodes],
+                )
+            )
+
+        return tasks
+
+    def _config_tasks(
+        self,
+        files: list[CodeFile],
+        nodes: list[CodeNode],
+    ) -> list[TaskCard]:
+        by_file = _module_node_by_file(nodes)
+        tasks: list[TaskCard] = []
+
+        for code_file in files:
+            if not _is_config_file(code_file):
+                continue
+            seed = by_file.get(code_file.file_path)
+            tasks.append(
+                TaskCard(
+                    task_id=f"task_config_{_slug(code_file.file_path)}",
+                    repo_id=self.context_service.repo_id,
+                    task_type="config_review",
+                    target=code_file.file_path,
+                    seed_node_id=seed.node_id if seed else "",
+                    priority="medium",
+                    review_focus=[
+                        "敏感信息泄露",
+                        "DEBUG 配置",
+                        "数据库连接配置",
+                        "Token / Secret 配置",
+                        "跨域 CORS 配置",
+                    ],
+                    related_files=[code_file.file_path],
+                    recommended_nodes=[seed.node_id] if seed else [],
+                )
+            )
+
+        return tasks
+
+    def _module_tasks(
+        self,
+        files: list[CodeFile],
+        nodes: list[CodeNode],
+    ) -> list[TaskCard]:
+        by_file = _module_node_by_file(nodes)
+        tasks: list[TaskCard] = []
+        dirs = sorted(
+            {
+                "/".join(Path(item.file_path).parts[:2])
+                for item in files
+                if len(Path(item.file_path).parts) >= 2
+                and Path(item.file_path).parts[1] in IMPORTANT_DIRS
+            }
+        )
+
+        for dirname in dirs:
+            related_files = [
+                item.file_path for item in files if item.file_path.startswith(f"{dirname}/")
+            ]
+            seed = next(
+                (by_file[file_path] for file_path in related_files if file_path in by_file),
+                None,
+            )
+            tasks.append(
+                TaskCard(
+                    task_id=f"task_module_{_slug(dirname)}",
+                    repo_id=self.context_service.repo_id,
+                    task_type="module_review",
+                    target=dirname,
+                    seed_node_id=seed.node_id if seed else "",
+                    priority="medium",
+                    review_focus=["关键业务流程", "边界条件", "异常处理", "依赖调用关系"],
+                    related_files=related_files,
+                    recommended_nodes=[seed.node_id] if seed else [],
+                )
+            )
+
+        return tasks
+
+
+def _detect_framework(route_nodes: list[CodeNode]) -> str:
+    decorators = " ".join(" ".join(node.decorators) for node in route_nodes).lower()
+    if "router." in decorators or "app.get" in decorators or "app.post" in decorators:
+        return "fastapi"
+    if "app.route" in decorators:
+        return "flask"
+    return "unknown"
+
+
+def _focus_for_target(target: str) -> list[str]:
+    normalized = target.lower()
+    if any(keyword in normalized for keyword in AUTH_KEYWORDS):
+        return [
+            "输入校验",
+            "身份认证",
+            "密码校验",
+            "Token 生成与过期",
+            "认证绕过风险",
+            "异常处理",
+        ]
+    return ["输入校验", "权限控制", "异常处理", "下游调用风险"]
+
+
+def _is_config_file(code_file: CodeFile) -> bool:
+    return code_file.file_type == "config" or Path(code_file.file_path).name in CONFIG_NAMES
+
+
+def _module_node_by_file(nodes: list[CodeNode]) -> dict[str, CodeNode]:
+    return {node.file_path: node for node in nodes if node.type == "module"}
+
+
+def _slug(value: str) -> str:
+    chars = [char.lower() if char.isalnum() else "_" for char in value]
+    return "_".join(part for part in "".join(chars).strip("_").split("_") if part)

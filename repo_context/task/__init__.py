@@ -1,1 +1,15 @@
-"""任务层占位包，后续阶段用于确定性生成评审任务。"""
+"""确定性评审任务生成。"""
+
+from repo_context.task.review_task_generator import (
+    RepoSummary,
+    ReviewTaskGenerator,
+    ReviewTaskPlan,
+    TaskCard,
+)
+
+__all__ = [
+    "RepoSummary",
+    "ReviewTaskGenerator",
+    "ReviewTaskPlan",
+    "TaskCard",
+]
