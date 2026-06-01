@@ -1,1 +1,5 @@
-"""服务编排层占位包，后续阶段用于串联上下文处理流程。"""
+"""上下文服务层。"""
+
+from repo_context.service.context_service import ContextService
+
+__all__ = ["ContextService"]
