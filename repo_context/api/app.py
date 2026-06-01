@@ -205,6 +205,16 @@ def context_task_package(repo_id: str, task_id: str) -> dict[str, Any]:
     return package
 
 
+@app.get("/context/tasks/{task_id}/graph-slice")
+def context_task_graph_slice(
+    task_id: str,
+    repo_id: str,
+    depth: int = 2,
+) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    return service["context_service"].get_task_graph_slice(task_id=task_id, depth=depth)
+
+
 @app.get("/demo/{repo_id}/summary")
 def demo_summary(repo_id: str) -> dict[str, Any]:
     service = _load_demo_services(repo_id)

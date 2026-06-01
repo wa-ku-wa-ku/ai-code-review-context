@@ -7,6 +7,7 @@ from repo_context.service.context_service import ContextService
 AVAILABLE_CONTEXT_TOOLS = [
     "get_file_snippet",
     "get_node_detail",
+    "get_task_graph_slice",
     "get_callers",
     "get_callees",
     "trace_call_chain",
@@ -19,6 +20,10 @@ DEFAULT_CONTEXT_POLICY = {
     "max_snippet_lines": 120,
     "max_files": 5,
     "allow_expand": True,
+    "allow_task_graph_slice": True,
+    "allow_full_graph": False,
+    "prefer_graph_slice_first": True,
+    "max_graph_depth": 2,
 }
 
 SECURITY_KEYWORDS = {
@@ -115,11 +120,14 @@ class ContextPackBuilder:
         if dimension == "coding_style":
             policy["max_depth"] = 1
             policy["max_snippet_lines"] = 160
+            policy["max_graph_depth"] = 1
         elif dimension == "security":
             policy["max_depth"] = 2
             policy["max_files"] = 6
+            policy["max_graph_depth"] = 2
         elif dimension == "function_logic":
             policy["max_depth"] = 2
+            policy["max_graph_depth"] = 2
         return policy
 
     def _center_nodes(

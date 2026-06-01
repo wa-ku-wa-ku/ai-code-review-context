@@ -403,6 +403,96 @@ class ContextService:
             "edges": [self._edge_to_dict(edge, node_by_id) for edge in included_edges],
         }
 
+    def get_task_graph_slice(
+        self,
+        task_id: str,
+        depth: int = 2,
+        record_usage: bool = True,
+    ) -> dict[str, Any]:
+        """返回任务范围内的局部调用图，并把范围外相邻节点标记为边界节点。"""
+        task = self._resolve_task(task_id)
+        if task is None:
+            result = self._empty_task_graph_slice(task_id=task_id, depth=depth)
+            if record_usage:
+                self._record_graph_slice_usage(result)
+            return result
+
+        requested_depth = max(depth, 0)
+        policy = getattr(task, "context_policy", {}) or {}
+        max_graph_depth = policy.get("max_graph_depth", requested_depth)
+        effective_depth = min(requested_depth, max_graph_depth) if max_graph_depth is not None else requested_depth
+        centers = self._task_center_nodes(task)
+        if not centers:
+            result = {
+                **self._empty_task_graph_slice(task_id=task_id, depth=effective_depth),
+                "target": self._task_target_to_dict(task),
+            }
+            if record_usage:
+                self._record_graph_slice_usage(result)
+            return result
+
+        all_edges = [
+            edge for edge in self.store.list_code_edges(self.repo_id) if edge.edge_type == CALL_EDGE
+        ]
+        node_by_id = self._nodes_by_id()
+        adjacency = self._undirected_edge_map(all_edges)
+        allowed_node_ids = self._task_allowed_node_ids(task)
+        included_ids = {node.node_id for node in centers}
+        center_ids = {node.node_id for node in centers}
+        boundary: dict[str, dict[str, Any]] = {}
+        queue: deque[tuple[str, int]] = deque((node.node_id, 0) for node in centers)
+        visited = set(included_ids)
+
+        while queue:
+            current_id, current_depth = queue.popleft()
+            for next_id in adjacency.get(current_id, []):
+                next_node = node_by_id.get(next_id)
+                if next_node is None:
+                    continue
+                reason = None
+                if allowed_node_ids and next_id not in allowed_node_ids:
+                    reason = "outside task scope"
+                elif current_depth >= effective_depth:
+                    reason = "beyond requested depth"
+
+                if reason:
+                    if next_id not in included_ids:
+                        boundary[next_id] = self._boundary_node(next_node, reason)
+                    continue
+
+                if next_id in visited:
+                    continue
+                visited.add(next_id)
+                included_ids.add(next_id)
+                queue.append((next_id, current_depth + 1))
+
+        included_edges = [
+            edge
+            for edge in all_edges
+            if edge.source_node_id in included_ids and edge.target_node_id in included_ids
+        ]
+        result = {
+            "task_id": task_id,
+            "target": self._task_target_to_dict(task),
+            "depth": effective_depth,
+            "requested_depth": requested_depth,
+            "nodes": [
+                {
+                    **self._graph_node(node_by_id[node_id]),
+                    "is_target": node_id in center_ids,
+                }
+                for node_id in sorted(included_ids)
+                if node_id in node_by_id
+            ],
+            "edges": [self._edge_to_dict(edge, node_by_id) for edge in included_edges],
+            "boundary_nodes": list(boundary.values()),
+            "truncated": bool(boundary) or effective_depth < requested_depth,
+            "graph_scope": "task-local",
+        }
+        if record_usage:
+            self._record_graph_slice_usage(result)
+        return result
+
     def _walk_calls(
         self,
         node_id: str,
@@ -506,6 +596,103 @@ class ContextService:
         if candidates:
             return candidates[:3]
         return [node for node in nodes if node.file_path == normalized][:1]
+
+    def _resolve_task(self, task_id: str) -> Any | None:
+        from repo_context.task.review_task_generator import ReviewTaskGenerator
+
+        plan = ReviewTaskGenerator(self).generate()
+        return next((task for task in plan.review_tasks if task.task_id == task_id), None)
+
+    def _task_center_nodes(self, task: Any) -> list[CodeNode]:
+        centers: list[CodeNode] = []
+        seen: set[str] = set()
+        for node_id in [getattr(task, "seed_node_id", "")]:
+            node = self.store.get_code_node(self.repo_id, node_id)
+            if node is not None and node.node_id not in seen:
+                centers.append(node)
+                seen.add(node.node_id)
+
+        target_detail = getattr(task, "target_detail", {}) or {}
+        for symbol in target_detail.get("symbols", []) or []:
+            node = self._resolve_node(symbol)
+            if node is not None and node.node_id not in seen:
+                centers.append(node)
+                seen.add(node.node_id)
+        return centers[:8]
+
+    def _task_allowed_node_ids(self, task: Any) -> set[str]:
+        initial_context = getattr(task, "initial_context", {}) or {}
+        graph = initial_context.get("call_graph_slice", {})
+        graph_node_ids = {
+            node["node_id"]
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict) and isinstance(node.get("node_id"), str)
+        }
+        if graph_node_ids:
+            return graph_node_ids
+
+        related_files = set(getattr(task, "related_files", []) or [])
+        target_detail = getattr(task, "target_detail", {}) or {}
+        target_file = target_detail.get("file_path")
+        if target_file:
+            related_files.add(target_file)
+        return {
+            node.node_id
+            for node in self.store.list_code_nodes(self.repo_id)
+            if not related_files or node.file_path in related_files
+        }
+
+    @staticmethod
+    def _task_target_to_dict(task: Any) -> dict[str, Any]:
+        target_detail = getattr(task, "target_detail", {}) or {}
+        return {
+            "task_type": getattr(task, "task_type", None),
+            "review_dimension": getattr(task, "review_dimension", None),
+            "target": target_detail,
+            "priority": getattr(task, "priority", None),
+            "tags": list(getattr(task, "tags", []) or []),
+        }
+
+    @staticmethod
+    def _boundary_node(node: CodeNode, reason: str) -> dict[str, Any]:
+        return {
+            "id": node.qualified_name,
+            "node_id": node.node_id,
+            "type": node.type,
+            "name": node.name,
+            "file_path": node.file_path,
+            "start_line": node.start_line,
+            "end_line": node.end_line,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _empty_task_graph_slice(task_id: str, depth: int) -> dict[str, Any]:
+        return {
+            "task_id": task_id,
+            "target": None,
+            "depth": depth,
+            "requested_depth": depth,
+            "nodes": [],
+            "edges": [],
+            "boundary_nodes": [],
+            "truncated": False,
+            "graph_scope": "task-local",
+        }
+
+    def _record_graph_slice_usage(self, graph_slice: dict[str, Any]) -> None:
+        target = graph_slice.get("target") or {}
+        target_detail = target.get("target") if isinstance(target, dict) else {}
+        target_file = target_detail.get("file_path") if isinstance(target_detail, dict) else None
+        self._record_usage(
+            tool_name="get_task_graph_slice",
+            task_id=graph_slice.get("task_id"),
+            review_dimension=target.get("review_dimension") if isinstance(target, dict) else None,
+            file_path=target_file,
+            target_type="graph_slice",
+            target_name=target_file,
+            lines_returned=len(graph_slice.get("nodes", [])) + len(graph_slice.get("edges", [])),
+        )
 
     def _related_files_for_nodes(
         self,
