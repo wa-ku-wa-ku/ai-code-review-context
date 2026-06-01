@@ -264,16 +264,18 @@ GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
 | `task_id` | string | 当前任务 ID |
 | `target` | object | 任务目标和评审维度 |
 | `depth` | integer | 实际使用的图深度 |
-| `nodes` | array | 任务范围内节点 |
+| `nodes` | array | 任务范围内节点，包含 `relation_to_target`、`priority`、`risk_score`、`reason` 阅读引导字段 |
 | `edges` | array | 任务范围内边 |
-| `boundary_nodes` | array | 超出任务范围或深度限制的相邻节点 |
+| `boundary_nodes` | array | 超出任务范围或深度限制的相邻节点，包含 `reason`、`risk_score` 等字段，但不会继续展开 |
 | `truncated` | boolean | 是否因范围或深度限制发生截断 |
 | `graph_scope` | string | 固定为 `task-local` |
 
 ### 下游重点读取
 
-- `nodes`：优先选择 `is_target=true` 或与目标相邻的节点继续查看源码；
+- `nodes`：优先选择 `priority` 高、`risk_score` 高、`is_target=true` 或与目标相邻的节点继续查看源码；
 - `edges`：理解任务内调用方向；
+- `relation_to_target`：判断节点是 `target`、`direct_callee`、`direct_caller`、`indirect` 还是 `boundary`；
+- `reason`：解释为什么建议阅读该节点；
 - `boundary_nodes`：识别被限制在局部图之外、必要时通过反馈说明需要更多上下文；
 - `truncated`：判断当前图是否受 depth / task-local policy 限制。
 

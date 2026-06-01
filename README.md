@@ -250,6 +250,7 @@ print(coverage)
 - `initial_context` 只放任务入口、关注点和工具引导，不再预塞源码片段或调用图。
 - agent 应先调用 `get_task_graph_slice` / `/context/tasks/{task_id}/graph-slice` 获取 task-local graph slice。
 - `get_task_graph_slice` 只返回任务局部图，完整仓库 graph 不对下游暴露。
+- graph slice 的 `nodes` 和 `boundary_nodes` 会带 `relation_to_target`、`priority`、`risk_score`、`reason`，下游 agent 可优先阅读高优先级和高风险节点。
 - agent 需要更多源码上下文时，再调用 `related-context`、`file-snippet`、`node-detail`、`callers`、`callees` 逐步扩展。
 - 每次上下文读取都会尽量写入 `context_usage`，用于覆盖率统计。
 

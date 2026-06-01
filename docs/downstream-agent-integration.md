@@ -115,13 +115,13 @@ GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
 
 返回重点字段：
 
-- `nodes`：任务范围内节点。
+- `nodes`：任务范围内节点，包含 `relation_to_target`、`priority`、`risk_score`、`reason`。
 - `edges`：任务范围内调用关系。
-- `boundary_nodes`：超出任务范围或深度限制的相邻节点。
+- `boundary_nodes`：超出任务范围或深度限制的相邻节点，也包含 `reason` 和 `risk_score`，但不会继续展开。
 - `truncated`：是否发生截断。
 - `graph_scope`：固定为 `task-local`。
 
-约束：该接口只返回任务局部图，不返回完整仓库调用图。
+下游 agent 应优先阅读 `priority` 高、`risk_score` 高、`relation_to_target` 为 `target` / `direct_callee` / `direct_caller` 的节点。约束：该接口只返回任务局部图，不返回完整仓库调用图。
 
 ## 4. 按需扩展上下文
 

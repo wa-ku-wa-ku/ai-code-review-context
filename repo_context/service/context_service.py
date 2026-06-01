@@ -9,6 +9,23 @@ from repo_context.store.sqlite_store import SQLiteStore
 
 CALL_EDGE = "calls"
 
+GRAPH_RISK_KEYWORDS = {
+    "auth",
+    "token",
+    "password",
+    "permission",
+    "jwt",
+    "sql",
+    "query",
+    "execute",
+    "file",
+    "path",
+    "upload",
+    "subprocess",
+    "eval",
+    "exec",
+}
+
 
 class ContextService:
     def __init__(self, repo_id: str, repo_root: str | Path, db_path: str | Path) -> None:
@@ -436,12 +453,15 @@ class ContextService:
         ]
         node_by_id = self._nodes_by_id()
         adjacency = self._undirected_edge_map(all_edges)
+        outgoing = self._edge_map(all_edges, direction="out")
+        incoming = self._edge_map(all_edges, direction="in")
         allowed_node_ids = self._task_allowed_node_ids(task)
         included_ids = {node.node_id for node in centers}
         center_ids = {node.node_id for node in centers}
         boundary: dict[str, dict[str, Any]] = {}
         queue: deque[tuple[str, int]] = deque((node.node_id, 0) for node in centers)
         visited = set(included_ids)
+        node_depths = {node.node_id: 0 for node in centers}
 
         while queue:
             current_id, current_depth = queue.popleft()
@@ -457,13 +477,21 @@ class ContextService:
 
                 if reason:
                     if next_id not in included_ids:
-                        boundary[next_id] = self._boundary_node(next_node, reason)
+                        boundary[next_id] = self._task_graph_node_payload(
+                            next_node,
+                            center_ids=center_ids,
+                            outgoing=outgoing,
+                            incoming=incoming,
+                            depth=current_depth + 1,
+                            boundary_reason=reason,
+                        )
                     continue
 
                 if next_id in visited:
                     continue
                 visited.add(next_id)
                 included_ids.add(next_id)
+                node_depths[next_id] = current_depth + 1
                 queue.append((next_id, current_depth + 1))
 
         included_edges = [
@@ -476,16 +504,21 @@ class ContextService:
             "target": self._task_target_to_dict(task),
             "depth": effective_depth,
             "requested_depth": requested_depth,
-            "nodes": [
-                {
-                    **self._graph_node(node_by_id[node_id]),
-                    "is_target": node_id in center_ids,
-                }
-                for node_id in sorted(included_ids)
-                if node_id in node_by_id
-            ],
+            "nodes": self._sort_graph_nodes(
+                [
+                    self._task_graph_node_payload(
+                        node_by_id[node_id],
+                        center_ids=center_ids,
+                        outgoing=outgoing,
+                        incoming=incoming,
+                        depth=node_depths.get(node_id, effective_depth),
+                    )
+                    for node_id in included_ids
+                    if node_id in node_by_id
+                ]
+            ),
             "edges": [self._edge_to_dict(edge, node_by_id) for edge in included_edges],
-            "boundary_nodes": list(boundary.values()),
+            "boundary_nodes": self._sort_graph_nodes(list(boundary.values())),
             "truncated": bool(boundary) or effective_depth < requested_depth,
             "graph_scope": "task-local",
         }
@@ -669,6 +702,126 @@ class ContextService:
             "end_line": node.end_line,
             "reason": reason,
         }
+
+    def _task_graph_node_payload(
+        self,
+        node: CodeNode,
+        center_ids: set[str],
+        outgoing: dict[str, list[str]],
+        incoming: dict[str, list[str]],
+        depth: int,
+        boundary_reason: str | None = None,
+    ) -> dict[str, Any]:
+        relation = self._relation_to_target(
+            node.node_id,
+            center_ids=center_ids,
+            outgoing=outgoing,
+            incoming=incoming,
+            depth=depth,
+            is_boundary=boundary_reason is not None,
+        )
+        risk_score = self._node_risk_score(node)
+        priority = self._node_priority(relation, risk_score, is_boundary=boundary_reason is not None)
+        reason = self._node_reading_reason(
+            node,
+            relation=relation,
+            risk_score=risk_score,
+            boundary_reason=boundary_reason,
+        )
+        return {
+            **self._graph_node(node),
+            "is_target": node.node_id in center_ids,
+            "relation_to_target": relation,
+            "priority": priority,
+            "risk_score": risk_score,
+            "reason": reason,
+            **({"boundary_reason": boundary_reason} if boundary_reason else {}),
+        }
+
+    @staticmethod
+    def _relation_to_target(
+        node_id: str,
+        center_ids: set[str],
+        outgoing: dict[str, list[str]],
+        incoming: dict[str, list[str]],
+        depth: int,
+        is_boundary: bool,
+    ) -> str:
+        if node_id in center_ids:
+            return "target"
+        if any(node_id in outgoing.get(center_id, []) for center_id in center_ids):
+            return "direct_callee"
+        if any(node_id in incoming.get(center_id, []) for center_id in center_ids):
+            return "direct_caller"
+        if is_boundary:
+            return "boundary"
+        if depth <= 1:
+            return "adjacent"
+        return "indirect"
+
+    @staticmethod
+    def _node_priority(relation: str, risk_score: int, is_boundary: bool) -> int:
+        base_priority = {
+            "target": 100,
+            "direct_callee": 85,
+            "direct_caller": 80,
+            "adjacent": 70,
+            "indirect": 55,
+            "boundary": 35,
+        }.get(relation, 50)
+        if relation == "target":
+            return base_priority
+        risk_boost = min(risk_score // 10, 10)
+        if is_boundary:
+            risk_boost = min(risk_boost, 5)
+        return min(base_priority + risk_boost, 99)
+
+    @staticmethod
+    def _node_risk_score(node: CodeNode) -> int:
+        searchable = " ".join(
+            [
+                node.name,
+                node.qualified_name,
+                node.file_path,
+                node.signature,
+                " ".join(node.decorators),
+            ]
+        ).lower()
+        matches = {keyword for keyword in GRAPH_RISK_KEYWORDS if keyword in searchable}
+        return min(len(matches) * 20, 100)
+
+    @staticmethod
+    def _node_reading_reason(
+        node: CodeNode,
+        relation: str,
+        risk_score: int,
+        boundary_reason: str | None = None,
+    ) -> str:
+        relation_reasons = {
+            "target": "Target node for this review task.",
+            "direct_callee": "Direct callee of the target; inspect how target delegates work.",
+            "direct_caller": "Direct caller of the target; inspect entry and parameter flow.",
+            "adjacent": "Adjacent task-local node; useful for immediate context.",
+            "indirect": "Indirect task-local node; inspect after direct neighbors if needed.",
+            "boundary": "Boundary node is not expanded in this task-local graph.",
+        }
+        reason = relation_reasons.get(relation, "Task-local graph node.")
+        if risk_score:
+            reason = f"{reason} Risk keywords matched in {node.name} or path."
+        if boundary_reason:
+            reason = f"{boundary_reason}; {reason}"
+        return reason
+
+    @staticmethod
+    def _sort_graph_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            nodes,
+            key=lambda node: (
+                -int(node.get("priority", 0)),
+                -int(node.get("risk_score", 0)),
+                str(node.get("name", "")),
+            ),
+        )
 
     @staticmethod
     def _empty_task_graph_slice(task_id: str, depth: int) -> dict[str, Any]:

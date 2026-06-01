@@ -1138,11 +1138,15 @@ _DEMO_HTML = """
     async function renderContextPane(pkg) {
       const depth = pkg.context_policy?.max_graph_depth ?? 2;
       const graph = await requestJson(`/context/tasks/${encodeURIComponent(pkg.task_id)}/graph-slice?repo_id=${encodeURIComponent(currentRepoId)}&depth=${encodeURIComponent(depth)}`);
+      const rankedNodes = (graph.nodes || []).slice(0, 6);
       document.getElementById("contextPane").innerHTML = `
         <div class="info-box">
           <h3>Task-local graph slice</h3>
           <p>只展示当前任务附近的调用关系，不返回完整仓库图。</p>
           <p>${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边，边界节点 ${graph.boundary_nodes?.length || 0} 个。</p>
+          <div class="context-actions">
+            ${rankedNodes.map(node => `<span class="pill">${escapeHtml(node.name)} · P${node.priority ?? "-"} · R${node.risk_score ?? "-"}</span>`).join("")}
+          </div>
           <pre>${escapeHtml(JSON.stringify(graph, null, 2))}</pre>
         </div>
         <div class="info-box" style="margin-top:12px">
