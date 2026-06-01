@@ -13,3 +13,6 @@ skills-lock.json
 
 # External repositories used only as local fixtures
 tests/fixtures/fastapi-sqlalchemy-starter-main/
+
+# Development planning notes and prompts
+dev_docs/
