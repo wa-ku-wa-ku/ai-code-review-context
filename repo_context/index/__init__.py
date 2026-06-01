@@ -1,1 +1,5 @@
-"""索引层占位包，后续阶段用于构建代码上下文索引。"""
+"""上下文索引构建层。"""
+
+from repo_context.index.index_builder import IndexBuildResult, build_index
+
+__all__ = ["IndexBuildResult", "build_index"]

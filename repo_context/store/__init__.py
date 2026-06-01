@@ -1,1 +1,19 @@
-"""存储层占位包，后续阶段用于 SQLite 持久化。"""
+"""SQLite 存储层。"""
+
+from repo_context.store.models import (
+    CodeEdge,
+    CodeFile,
+    CodeNode,
+    ContextUsage,
+    ReviewTask,
+)
+from repo_context.store.sqlite_store import SQLiteStore
+
+__all__ = [
+    "CodeEdge",
+    "CodeFile",
+    "CodeNode",
+    "ContextUsage",
+    "ReviewTask",
+    "SQLiteStore",
+]
