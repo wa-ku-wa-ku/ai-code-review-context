@@ -15,7 +15,8 @@ def test_demo_page_loads() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "仓库上下文处理 Demo" in response.text
+    assert "AI 仓库级代码评审上下文台" in response.text
+    assert "评审任务" in response.text
 
 
 def test_demo_index_returns_outputs(tmp_path: Path) -> None:

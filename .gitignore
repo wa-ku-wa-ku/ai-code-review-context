@@ -3,3 +3,10 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
+
+# Local agent/tooling state
+.agents/
+.claude/
+.codegraph/
+.mcp.json
+skills-lock.json

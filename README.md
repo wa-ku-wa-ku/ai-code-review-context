@@ -38,6 +38,61 @@ pytest
 
 `httpx` 是 FastAPI / Starlette `TestClient` 的测试依赖。不要为了当前测试随意改成 `httpx2`。
 
+## 启动教程
+
+最常用的本地 demo 启动方式如下。
+
+1. 进入项目目录：
+
+```powershell
+cd D:\HSBC-AIreview\ai-code-review-context
+```
+
+2. 安装依赖：
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+3. 启动 FastAPI 服务：
+
+```powershell
+python -m uvicorn repo_context.api.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+4. 打开 demo 页面：
+
+```text
+http://127.0.0.1:8000/
+```
+
+5. 使用页面：
+
+- `项目标识` 可以保持默认 `sample-repo`，也可以换成自己的 repo id。
+- `仓库路径` 可以先用默认值 `tests/fixtures/sample_repo` 验证流程。
+- 点击 `构建索引`，系统会扫描仓库、解析 AST、写入 SQLite、生成评审任务包。
+- 点击左侧任务卡片，查看目标文件、目标符号、关注点、初始上下文和 task-local graph slice。
+- 使用 `扩展相关上下文`、`查看目标文件片段`、`查看目标符号` 按需读取更多上下文。
+- 切到 `覆盖率` 视图，可以看到下游工具实际读取过哪些文件、符号和图关系。
+
+6. 查看接口文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+7. 停止服务：
+
+在启动服务的终端按 `Ctrl+C`。
+
+如果想分析自己的仓库，把页面里的 `仓库路径` 改成服务端本机可访问的 Python 仓库目录，例如：
+
+```text
+D:\demo_repos\my_python_repo
+```
+
+当前 demo 读取的是服务端本机路径，不是浏览器上传文件。
+
 ## 快速开始
 
 使用项目自带的 sample repo 构建索引：

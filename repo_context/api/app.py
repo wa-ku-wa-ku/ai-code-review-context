@@ -641,3 +641,653 @@ GET /demo/{repo_id}/coverage</pre>
 </body>
 </html>
 """
+
+_DEMO_HTML = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Code Review Context</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #5f6f86;
+      --border: #dbe2ec;
+      --soft: #eef3f8;
+      --brand: #1f5fbf;
+      --brand-2: #0f766e;
+      --danger: #b42318;
+      --warn: #9a5b00;
+      --ok: #1f7a3a;
+      --shadow: 0 10px 28px rgba(25, 39, 70, 0.08);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+    .brand p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .status {
+      min-width: 260px;
+      max-width: 520px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 16px;
+      padding: 16px;
+      max-width: 1500px;
+      margin: 0 auto;
+    }
+
+    section, aside {
+      min-width: 0;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .panel-header h2 { margin: 0; font-size: 16px; }
+    .panel-body { padding: 16px; }
+
+    label { display: block; margin: 12px 0 6px; font-size: 13px; font-weight: 700; }
+    input {
+      width: 100%;
+      height: 38px;
+      border: 1px solid #c6ceda;
+      border-radius: 7px;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+    button {
+      border: 0;
+      border-radius: 7px;
+      padding: 9px 12px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      background: var(--brand);
+      color: #fff;
+    }
+    button.secondary { background: #eef3f8; color: var(--text); border: 1px solid #c6ceda; }
+    button.ghost { background: transparent; color: var(--brand); border: 1px solid var(--border); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .button-row { display: flex; gap: 8px; margin-top: 14px; }
+    .button-row button { flex: 1; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 13px;
+    }
+    .metric .label { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .metric .value { margin-top: 5px; font-size: 24px; font-weight: 800; }
+    .metric .hint { margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+    .task-list { display: grid; gap: 10px; max-height: calc(100vh - 310px); overflow: auto; padding-right: 2px; }
+    .task-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+    .task-card:hover { border-color: #9eb4d5; background: #f9fbfe; transform: translateY(-1px); }
+    .task-card.active { border-color: var(--brand); background: #eef5ff; }
+    .task-title { font-weight: 800; line-height: 1.35; margin-bottom: 8px; }
+    .task-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .task-target { color: var(--muted); font-size: 12px; word-break: break-all; line-height: 1.45; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pill.high { background: #fff0f0; color: var(--danger); }
+    .pill.medium { background: #fff7e6; color: var(--warn); }
+    .pill.low { background: #eff8f0; color: var(--ok); }
+    .pill.security { background: #edf2ff; color: #244aa5; }
+    .pill.logic { background: #ecfdf5; color: var(--brand-2); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
+      gap: 16px;
+    }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .info-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      min-width: 0;
+    }
+    .info-box h3 { margin: 0 0 8px; font-size: 14px; }
+    .info-box p, .info-box li { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .info-box p { margin: 6px 0; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    .empty {
+      padding: 28px;
+      border: 1px dashed #b8c2d1;
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+      background: #fbfcff;
+    }
+
+    .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); padding: 0 12px; }
+    .tab {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 11px 8px;
+      border-bottom: 2px solid transparent;
+    }
+    .tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+    .tab-content { padding: 14px; }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      overflow: auto;
+      max-height: 430px;
+      border-radius: 8px;
+      background: #111827;
+      color: #e5edf7;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .context-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .context-actions button { padding: 7px 9px; font-size: 12px; }
+    .split-line { height: 1px; background: var(--border); margin: 12px 0; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .mono { font-family: Consolas, "Courier New", monospace; }
+
+    @media (max-width: 1180px) {
+      main, .workspace { grid-template-columns: 1fr; }
+      .task-list { max-height: none; }
+    }
+    @media (max-width: 760px) {
+      header { padding: 16px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .status { min-width: 0; width: 100%; }
+      main { padding: 10px; }
+      .metrics, .detail-grid { grid-template-columns: 1fr; }
+      .button-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <h1>AI 仓库级代码评审上下文台</h1>
+        <p>为下游 review agent 构建任务包、局部调用图、按需源码片段和覆盖率追踪。</p>
+      </div>
+      <div id="status" class="status">等待索引仓库。输入本地仓库路径后开始分析。</div>
+    </div>
+  </header>
+
+  <main>
+    <aside class="panel">
+      <div class="panel-header">
+        <h2>分析入口</h2>
+      </div>
+      <div class="panel-body">
+        <label for="projectName">项目标识</label>
+        <input id="projectName" value="sample-repo" />
+
+        <label for="repoPath">仓库路径</label>
+        <input id="repoPath" value="tests/fixtures/sample_repo" />
+
+        <div class="button-row">
+          <button onclick="buildIndex()">构建索引</button>
+          <button class="secondary" onclick="refreshCoverage()">刷新覆盖率</button>
+        </div>
+
+        <div class="split-line"></div>
+        <div class="small muted">任务卡片按优先级和目标展示。点击任务后右侧会显示上下文包、局部调用图和可继续查询的工具入口。</div>
+      </div>
+
+      <div class="panel-header">
+        <h2>评审任务</h2>
+        <span id="taskCount" class="pill">0 个</span>
+      </div>
+      <div class="panel-body">
+        <div id="tasks" class="task-list">
+          <div class="empty">尚未生成任务。</div>
+        </div>
+      </div>
+    </aside>
+
+    <section>
+      <div id="metrics" class="metrics"></div>
+      <div class="workspace">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 id="detailTitle">任务详情</h2>
+            <button class="ghost" onclick="showRaw(lastSelectedPackage || lastPayload || {})">查看 JSON</button>
+          </div>
+          <div id="detail" class="panel-body">
+            <div class="empty">先点击“构建索引”，再选择左侧任务。这里会展示任务为什么存在、看哪些文件和符号、初始上下文有多大。</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>上下文与覆盖率</h2>
+          </div>
+          <div class="tabs">
+            <button id="tabContext" class="tab active" onclick="switchTab('context')">上下文</button>
+            <button id="tabCoverage" class="tab" onclick="switchTab('coverage')">覆盖率</button>
+            <button id="tabRaw" class="tab" onclick="switchTab('raw')">原始数据</button>
+          </div>
+          <div id="contextPane" class="tab-content"></div>
+          <div id="coveragePane" class="tab-content" style="display:none"></div>
+          <div id="rawPane" class="tab-content" style="display:none"><pre id="rawOutput">{}</pre></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let currentRepoId = "";
+    let currentTasks = [];
+    let activeTaskId = "";
+    let lastPayload = null;
+    let lastSelectedPackage = null;
+    let lastCoverage = null;
+
+    function setStatus(text) {
+      document.getElementById("status").textContent = text;
+    }
+
+    function slug(value) {
+      return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "demo-repo";
+    }
+
+    async function requestJson(url, options) {
+      const response = await fetch(url, options);
+      const text = await response.text();
+      if (!response.ok) throw new Error(text || response.statusText);
+      return JSON.parse(text);
+    }
+
+    async function buildIndex() {
+      try {
+        setStatus("正在扫描文件、解析 AST、构建 SQLite 索引和任务包...");
+        currentRepoId = slug(document.getElementById("projectName").value);
+        const payload = {
+          repo_id: currentRepoId,
+          repo_path: document.getElementById("repoPath").value.trim(),
+          db_path: `.demo_data/${currentRepoId}.db`
+        };
+        const data = await requestJson("/context/index", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        lastPayload = data;
+        lastCoverage = data.usage_coverage_report;
+        currentTasks = sortTasks(data.review_tasks || []);
+        activeTaskId = "";
+        lastSelectedPackage = null;
+        renderMetrics(data.repo_summary, data.task_coverage_report, data.usage_coverage_report);
+        renderTasks();
+        renderOverview(data);
+        renderCoverage(data.usage_coverage_report);
+        showRaw(data);
+        setStatus(`分析完成：${currentTasks.length} 个任务，${data.repo_summary.python_files} 个 Python 文件。`);
+      } catch (error) {
+        setStatus("分析失败，请检查路径或后端日志。");
+        showRaw({ error: String(error) });
+      }
+    }
+
+    function sortTasks(tasks) {
+      const rank = { high: 0, medium: 1, low: 2 };
+      return [...tasks].sort((a, b) => {
+        const pa = rank[a.priority] ?? 9;
+        const pb = rank[b.priority] ?? 9;
+        return pa - pb || String(a.task_type).localeCompare(String(b.task_type)) || String(a.task_id).localeCompare(String(b.task_id));
+      });
+    }
+
+    function renderMetrics(summary = {}, taskCoverage = {}, usageCoverage = {}) {
+      const metrics = [
+        ["框架", summary.framework || "unknown", "基于路由装饰器识别"],
+        ["Python 文件", summary.python_files ?? 0, `${summary.test_files?.length || 0} 个测试文件`],
+        ["任务覆盖", percent(taskCoverage.coverage_ratio), `${taskCoverage.uncovered_python_files?.length || 0} 个文件未被任务覆盖`],
+        ["实际读取", percent(usageCoverage.file_coverage), `${usageCoverage.covered_files?.length || 0} 个文件已被工具读取`]
+      ];
+      document.getElementById("metrics").innerHTML = metrics.map(([label, value, hint]) => `
+        <div class="metric">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="value">${escapeHtml(String(value))}</div>
+          <div class="hint">${escapeHtml(String(hint))}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderTasks() {
+      const box = document.getElementById("tasks");
+      document.getElementById("taskCount").textContent = `${currentTasks.length} 个`;
+      if (!currentTasks.length) {
+        box.innerHTML = `<div class="empty">尚未生成任务。</div>`;
+        return;
+      }
+      box.innerHTML = currentTasks.map(task => {
+        const target = normalizeTarget(task);
+        const graph = task.initial_context?.call_graph_slice || {};
+        return `
+          <article class="task-card ${task.task_id === activeTaskId ? "active" : ""}" onclick="selectTask('${escapeAttr(task.task_id)}')">
+            <div class="task-title">${escapeHtml(humanTaskType(task.task_type))}</div>
+            <div class="task-meta">
+              <span class="pill ${task.priority}">${escapeHtml(humanPriority(task.priority))}</span>
+              <span class="pill ${dimensionClass(task.review_dimension)}">${escapeHtml(humanDimension(task.review_dimension))}</span>
+              <span class="pill">${graph.nodes?.length || 0} 点 / ${graph.edges?.length || 0} 边</span>
+            </div>
+            <div class="task-target">
+              <div><strong>目标文件：</strong>${escapeHtml(target.file || "未指定")}</div>
+              <div><strong>目标符号：</strong>${escapeHtml(target.symbols || "自动选择")}</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderOverview(data) {
+      document.getElementById("detailTitle").textContent = "仓库概览";
+      const summary = data.repo_summary || {};
+      document.getElementById("detail").innerHTML = `
+        <div class="detail-grid">
+          <div class="info-box">
+            <h3>入口与配置</h3>
+            <p>识别到 ${summary.entrypoints?.length || 0} 个 API 入口，${summary.config_files?.length || 0} 个配置文件。</p>
+            <p class="mono small">${escapeHtml((summary.config_files || []).join(", ") || "无配置文件")}</p>
+          </div>
+          <div class="info-box">
+            <h3>建议工作流</h3>
+            <p>从 high priority 任务开始。先看任务包，再按需展开源码片段和调用关系。</p>
+          </div>
+        </div>
+      `;
+      document.getElementById("contextPane").innerHTML = `
+        <div class="info-box">
+          <h3>下一步</h3>
+          <p>点击左侧任意任务卡片，查看目标、关注点、初始上下文和 task-local graph slice。</p>
+        </div>
+      `;
+    }
+
+    async function selectTask(taskId) {
+      try {
+        activeTaskId = taskId;
+        renderTasks();
+        setStatus("正在读取任务包...");
+        const task = currentTasks.find(item => item.task_id === taskId);
+        const pkg = await requestJson(`/context/task-package/${encodeURIComponent(taskId)}?repo_id=${encodeURIComponent(currentRepoId)}`);
+        lastSelectedPackage = pkg;
+        renderTaskDetail(task || pkg, pkg);
+        renderContextPane(pkg);
+        showRaw(pkg);
+        setStatus(`已打开任务：${taskId}`);
+      } catch (error) {
+        setStatus("读取任务包失败。");
+        showRaw({ error: String(error) });
+      }
+    }
+
+    function renderTaskDetail(task, pkg) {
+      const target = normalizeTarget(pkg || task);
+      const graph = pkg.initial_context?.call_graph_slice || {};
+      document.getElementById("detailTitle").textContent = humanTaskType(pkg.task_type);
+      document.getElementById("detail").innerHTML = `
+        <div class="detail-grid">
+          <div class="info-box">
+            <h3>这张卡片要看什么</h3>
+            <p><strong>目标文件：</strong><span class="mono">${escapeHtml(target.file || "未指定")}</span></p>
+            <p><strong>目标符号：</strong>${escapeHtml(target.symbols || "自动选择")}</p>
+            <p><strong>原因：</strong>${escapeHtml(pkg.reason || "由规则生成的仓库评审任务。")}</p>
+            <div class="task-meta">
+              <span class="pill ${pkg.priority}">${escapeHtml(humanPriority(pkg.priority))}</span>
+              <span class="pill ${dimensionClass(pkg.review_dimension)}">${escapeHtml(humanDimension(pkg.review_dimension))}</span>
+              ${(pkg.tags || []).map(tag => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}
+            </div>
+          </div>
+          <div class="info-box">
+            <h3>上下文范围</h3>
+            <p>初始片段：${pkg.initial_context?.file_snippets?.length || 0} 个</p>
+            <p>相关符号：${pkg.initial_context?.related_symbols?.length || 0} 个</p>
+            <p>局部调用图：${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边，depth=${graph.depth ?? "-"}</p>
+            <p>策略：最多 ${pkg.context_policy?.max_files ?? "-"} 个文件，片段最多 ${pkg.context_policy?.max_snippet_lines ?? "-"} 行。</p>
+          </div>
+        </div>
+        <div class="info-box" style="margin-top:12px">
+          <h3>关注点</h3>
+          <ul>${(pkg.focus_points || pkg.review_focus || []).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <div class="context-actions">
+            <button onclick="loadRelatedContext()">扩展相关上下文</button>
+            <button class="secondary" onclick="loadPrimarySnippet()">查看目标文件片段</button>
+            <button class="secondary" onclick="loadPrimaryNode()">查看目标符号</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderContextPane(pkg) {
+      const graph = pkg.initial_context?.call_graph_slice || { nodes: [], edges: [] };
+      const snippets = pkg.initial_context?.file_snippets || [];
+      const symbols = pkg.initial_context?.related_symbols || [];
+      document.getElementById("contextPane").innerHTML = `
+        <div class="info-box">
+          <h3>Task-local graph slice</h3>
+          <p>只展示当前任务附近的调用关系，不返回完整仓库图。</p>
+          <p>${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边。</p>
+          <pre>${escapeHtml(JSON.stringify(graph, null, 2))}</pre>
+        </div>
+        <div class="info-box" style="margin-top:12px">
+          <h3>初始上下文</h3>
+          <p>源码片段 ${snippets.length} 个，相关符号 ${symbols.length} 个。</p>
+          <pre>${escapeHtml(JSON.stringify({ snippets, symbols }, null, 2))}</pre>
+        </div>
+      `;
+    }
+
+    async function loadRelatedContext() {
+      if (!lastSelectedPackage) return;
+      const target = normalizeTarget(lastSelectedPackage);
+      const data = await requestJson("/context/related-context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo_id: currentRepoId,
+          task_id: lastSelectedPackage.task_id,
+          target_file: target.file,
+          review_dimension: lastSelectedPackage.review_dimension,
+          tags: lastSelectedPackage.tags || [],
+          max_depth: 1,
+          max_files: 3
+        })
+      });
+      document.getElementById("contextPane").innerHTML = `
+        <div class="info-box">
+          <h3>扩展上下文结果</h3>
+          <p>文件 ${data.related_files?.length || 0} 个，符号 ${data.related_symbols?.length || 0} 个，片段 ${data.snippets?.length || 0} 个。</p>
+          <pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+        </div>
+      `;
+      showRaw(data);
+      await refreshCoverage();
+    }
+
+    async function loadPrimarySnippet() {
+      if (!lastSelectedPackage) return;
+      const target = normalizeTarget(lastSelectedPackage);
+      if (!target.file) return;
+      const data = await requestJson(`/context/file-snippet?repo_id=${encodeURIComponent(currentRepoId)}&file_path=${encodeURIComponent(target.file)}&start_line=1&end_line=80&task_id=${encodeURIComponent(lastSelectedPackage.task_id)}&review_dimension=${encodeURIComponent(lastSelectedPackage.review_dimension || "")}`);
+      document.getElementById("contextPane").innerHTML = `<div class="info-box"><h3>目标文件片段</h3><pre>${escapeHtml(data.content || "")}</pre></div>`;
+      showRaw(data);
+      await refreshCoverage();
+    }
+
+    async function loadPrimaryNode() {
+      if (!lastSelectedPackage) return;
+      const target = normalizeTarget(lastSelectedPackage);
+      const symbol = target.symbolList[0];
+      if (!symbol) return;
+      const data = await requestJson(`/context/node-detail?repo_id=${encodeURIComponent(currentRepoId)}&symbol_name=${encodeURIComponent(symbol)}&task_id=${encodeURIComponent(lastSelectedPackage.task_id)}&review_dimension=${encodeURIComponent(lastSelectedPackage.review_dimension || "")}`);
+      document.getElementById("contextPane").innerHTML = `<div class="info-box"><h3>目标符号详情</h3><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></div>`;
+      showRaw(data);
+      await refreshCoverage();
+    }
+
+    async function refreshCoverage() {
+      if (!currentRepoId) return;
+      const data = await requestJson(`/demo/${encodeURIComponent(currentRepoId)}/coverage`);
+      lastCoverage = data.usage_coverage_report;
+      if (lastPayload) renderMetrics(lastPayload.repo_summary, lastPayload.task_coverage_report, lastCoverage);
+      renderCoverage(lastCoverage);
+      return data;
+    }
+
+    function renderCoverage(report = {}) {
+      document.getElementById("coveragePane").innerHTML = `
+        <div class="info-box">
+          <h3>实际读取覆盖率</h3>
+          <p>文件覆盖：${percent(report.file_coverage)}，节点覆盖：${percent(report.node_coverage)}，任务触达：${percent(report.task_completion_rate)}</p>
+          <p>已读文件：${escapeHtml((report.covered_files || []).join(", ") || "暂无")}</p>
+          <p>未读文件：${escapeHtml((report.uncovered_files || []).slice(0, 8).join(", ") || "暂无")}</p>
+        </div>
+        <div class="info-box" style="margin-top:12px">
+          <h3>Context usage</h3>
+          <pre>${escapeHtml(JSON.stringify(report.usage_records || [], null, 2))}</pre>
+        </div>
+      `;
+    }
+
+    function switchTab(name) {
+      for (const key of ["context", "coverage", "raw"]) {
+        document.getElementById(`${key}Pane`).style.display = key === name ? "block" : "none";
+        document.getElementById(`tab${capitalize(key)}`).classList.toggle("active", key === name);
+      }
+    }
+
+    function showRaw(data) {
+      document.getElementById("rawOutput").textContent = JSON.stringify(data || {}, null, 2);
+    }
+
+    function normalizeTarget(task) {
+      const target = task?.target || {};
+      const file = typeof target === "object" ? target.file_path : (String(target).endsWith(".py") ? target : "");
+      const symbolList = typeof target === "object" && Array.isArray(target.symbols) ? target.symbols : [];
+      return {
+        file,
+        symbolList,
+        symbols: symbolList.length ? symbolList.join(", ") : ""
+      };
+    }
+
+    function humanTaskType(type) {
+      return {
+        entrypoint_review: "入口安全评审",
+        config_review: "配置风险评审",
+        module_review: "模块逻辑评审",
+        file_review: "文件补充评审",
+        uncovered_file_review: "未覆盖文件补充"
+      }[type] || type || "评审任务";
+    }
+
+    function humanPriority(value) {
+      return { high: "高优先级", medium: "中优先级", low: "低优先级" }[value] || value || "未分级";
+    }
+
+    function humanDimension(value) {
+      return {
+        security: "安全",
+        function_logic: "功能逻辑",
+        coding_style: "代码质量",
+        requirement_consistency: "需求一致性"
+      }[value] || value || "通用";
+    }
+
+    function dimensionClass(value) {
+      return value === "security" ? "security" : "logic";
+    }
+
+    function percent(value) {
+      return `${Math.round((value || 0) * 100)}%`;
+    }
+
+    function capitalize(value) {
+      return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("`", "&#096;");
+    }
+  </script>
+</body>
+</html>
+"""
