@@ -16,6 +16,7 @@ class SQLiteStore:
         schema_path = Path(__file__).with_name("schema.sql")
         with self._connect() as conn:
             conn.executescript(schema_path.read_text(encoding="utf-8"))
+            self._ensure_context_usage_columns(conn)
 
     def insert_code_file(self, code_file: CodeFile) -> None:
         self.insert_code_files([code_file])
@@ -120,11 +121,14 @@ class SQLiteStore:
 
     def insert_context_usage(self, usage: ContextUsage) -> None:
         with self._connect() as conn:
+            self._ensure_context_usage_columns(conn)
             conn.execute(
                 """
                 INSERT OR REPLACE INTO context_usage (
-                    repo_id, usage_id, task_id, tool_name, node_id, file_path, used_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    repo_id, usage_id, task_id, tool_name, node_id, file_path,
+                    agent, review_dimension, target_type, target_name,
+                    start_line, end_line, lines_returned, used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     usage.repo_id,
@@ -133,15 +137,25 @@ class SQLiteStore:
                     usage.tool_name,
                     usage.node_id,
                     usage.file_path,
+                    usage.agent,
+                    usage.review_dimension,
+                    usage.target_type,
+                    usage.target_name,
+                    usage.start_line,
+                    usage.end_line,
+                    usage.lines_returned,
                     usage.used_at,
                 ),
             )
 
     def list_context_usage(self, repo_id: str) -> list[ContextUsage]:
         with self._connect() as conn:
+            self._ensure_context_usage_columns(conn)
             rows = conn.execute(
                 """
-                SELECT repo_id, usage_id, task_id, tool_name, node_id, file_path, used_at
+                SELECT repo_id, usage_id, task_id, tool_name, node_id, file_path,
+                       agent, review_dimension, target_type, target_name,
+                       start_line, end_line, lines_returned, used_at
                 FROM context_usage
                 WHERE repo_id = ?
                 ORDER BY used_at, usage_id
@@ -195,6 +209,25 @@ class SQLiteStore:
         return conn
 
     @staticmethod
+    def _ensure_context_usage_columns(conn: sqlite3.Connection) -> None:
+        existing = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(context_usage)").fetchall()
+        }
+        columns = {
+            "agent": "TEXT",
+            "review_dimension": "TEXT",
+            "target_type": "TEXT",
+            "target_name": "TEXT",
+            "start_line": "INTEGER",
+            "end_line": "INTEGER",
+            "lines_returned": "INTEGER",
+        }
+        for name, column_type in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE context_usage ADD COLUMN {name} {column_type}")
+
+    @staticmethod
     def _row_to_code_file(row: sqlite3.Row) -> CodeFile:
         return CodeFile(
             repo_id=row["repo_id"],
@@ -239,4 +272,11 @@ class SQLiteStore:
             node_id=row["node_id"],
             file_path=row["file_path"],
             used_at=row["used_at"],
+            agent=row["agent"],
+            review_dimension=row["review_dimension"],
+            target_type=row["target_type"],
+            target_name=row["target_name"],
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            lines_returned=row["lines_returned"],
         )

@@ -28,6 +28,22 @@ class DemoIndexRequest(BaseModel):
     db_path: str | None = None
 
 
+class RelatedContextRequest(BaseModel):
+    repo_id: str | None = None
+    task_id: str | None = None
+    target_file: str | None = None
+    review_dimension: str | None = None
+    tags: list[str] = []
+    max_depth: int = 2
+    max_files: int = 5
+
+
+class ContextSessionRequest(BaseModel):
+    repo_id: str
+    repo_path: str
+    db_path: str | None = None
+
+
 @app.get("/", response_class=HTMLResponse)
 def demo_page() -> str:
     return _DEMO_HTML
@@ -62,6 +78,133 @@ def demo_index(request: DemoIndexRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/context/index")
+def context_index(request: ContextSessionRequest) -> dict[str, Any]:
+    return demo_index(
+        DemoIndexRequest(
+            repo_id=request.repo_id,
+            repo_path=request.repo_path,
+            db_path=request.db_path,
+        )
+    )
+
+
+@app.get("/context/file-snippet")
+def context_file_snippet(
+    repo_id: str,
+    file_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    task_id: str | None = None,
+    review_dimension: str | None = None,
+) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    try:
+        return service["context_service"].get_file_snippet(
+            file_path=file_path,
+            start_line=start_line,
+            end_line=end_line,
+            task_id=task_id,
+            review_dimension=review_dimension,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/context/node-detail")
+def context_node_detail(
+    repo_id: str,
+    node_id: str | None = None,
+    symbol_name: str | None = None,
+    task_id: str | None = None,
+    review_dimension: str | None = None,
+) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    detail = service["context_service"].get_node_detail(
+        node_id=node_id,
+        symbol_name=symbol_name,
+        include_source=True,
+        task_id=task_id,
+        review_dimension=review_dimension,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    return detail
+
+
+@app.get("/context/callees")
+def context_callees(
+    repo_id: str,
+    node_id: str | None = None,
+    symbol_name: str | None = None,
+    depth: int = 1,
+    task_id: str | None = None,
+    review_dimension: str | None = None,
+) -> list[dict[str, Any]]:
+    service = _load_demo_services(repo_id)
+    return service["context_service"].get_callees(
+        node_id=node_id,
+        symbol_name=symbol_name,
+        depth=depth,
+        task_id=task_id,
+        review_dimension=review_dimension,
+    )
+
+
+@app.get("/context/callers")
+def context_callers(
+    repo_id: str,
+    node_id: str | None = None,
+    symbol_name: str | None = None,
+    depth: int = 1,
+    task_id: str | None = None,
+    review_dimension: str | None = None,
+) -> list[dict[str, Any]]:
+    service = _load_demo_services(repo_id)
+    return service["context_service"].get_callers(
+        node_id=node_id,
+        symbol_name=symbol_name,
+        depth=depth,
+        task_id=task_id,
+        review_dimension=review_dimension,
+    )
+
+
+@app.post("/context/related-context")
+def context_related_context(request: RelatedContextRequest) -> dict[str, Any]:
+    if not request.repo_id:
+        raise HTTPException(status_code=400, detail="repo_id is required")
+    service = _load_demo_services(request.repo_id)
+    task = request.model_dump(exclude={"repo_id"})
+    if request.target_file:
+        task["target"] = {
+            "type": "file",
+            "file_path": request.target_file,
+            "symbols": [],
+        }
+    try:
+        return service["context_service"].get_related_context(
+            task,
+            task_id=request.task_id,
+            target_file=request.target_file,
+            review_dimension=request.review_dimension,
+            tags=request.tags,
+            max_depth=request.max_depth,
+            max_files=request.max_files,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/context/task-package/{task_id}")
+def context_task_package(repo_id: str, task_id: str) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    package = service["task_generator"].get_task_package(task_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return package
+
+
 @app.get("/demo/{repo_id}/summary")
 def demo_summary(repo_id: str) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
@@ -85,6 +228,15 @@ def demo_task_context(repo_id: str, task_id: str) -> dict[str, Any]:
     return service["task_generator"].get_related_context(task_id)
 
 
+@app.get("/demo/{repo_id}/tasks/{task_id}/package")
+def demo_task_package(repo_id: str, task_id: str) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    package = service["task_generator"].get_task_package(task_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return package
+
+
 @app.get("/demo/{repo_id}/nodes/{node_id:path}")
 def demo_node_detail(repo_id: str, node_id: str, task_id: str | None = None) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
@@ -96,6 +248,28 @@ def demo_node_detail(repo_id: str, node_id: str, task_id: str | None = None) -> 
     if detail is None:
         raise HTTPException(status_code=404, detail="node not found")
     return detail
+
+
+@app.get("/demo/{repo_id}/nodes/{node_id:path}/callees")
+def demo_callees(
+    repo_id: str,
+    node_id: str,
+    depth: int = 1,
+    task_id: str | None = None,
+) -> list[dict[str, Any]]:
+    service = _load_demo_services(repo_id)
+    return service["context_service"].get_callees(node_id=node_id, depth=depth, task_id=task_id)
+
+
+@app.get("/demo/{repo_id}/nodes/{node_id:path}/callers")
+def demo_callers(
+    repo_id: str,
+    node_id: str,
+    depth: int = 1,
+    task_id: str | None = None,
+) -> list[dict[str, Any]]:
+    service = _load_demo_services(repo_id)
+    return service["context_service"].get_callers(node_id=node_id, depth=depth, task_id=task_id)
 
 
 @app.get("/demo/{repo_id}/files/snippet")
@@ -112,6 +286,27 @@ def demo_file_snippet(
         start_line,
         end_line,
         task_id=task_id,
+    )
+
+
+@app.post("/demo/{repo_id}/context/related")
+def demo_related_context(repo_id: str, request: RelatedContextRequest) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    task = request.model_dump()
+    if request.target_file:
+        task["target"] = {
+            "type": "file",
+            "file_path": request.target_file,
+            "symbols": [],
+        }
+    return service["context_service"].get_related_context(
+        task,
+        task_id=request.task_id,
+        target_file=request.target_file,
+        review_dimension=request.review_dimension,
+        tags=request.tags,
+        max_depth=request.max_depth,
+        max_files=request.max_files,
     )
 
 

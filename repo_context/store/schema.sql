@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS context_usage (
     tool_name TEXT NOT NULL,
     node_id TEXT,
     file_path TEXT,
+    agent TEXT,
+    review_dimension TEXT,
+    target_type TEXT,
+    target_name TEXT,
+    start_line INTEGER,
+    end_line INTEGER,
+    lines_returned INTEGER,
     used_at TEXT NOT NULL,
     PRIMARY KEY (repo_id, usage_id)
 );

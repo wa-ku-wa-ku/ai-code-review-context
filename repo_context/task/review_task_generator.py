@@ -1,8 +1,9 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from repo_context.service.context_service import ContextService
+from repo_context.service.context_pack_builder import ContextPackBuilder
 from repo_context.store.models import CodeFile, CodeNode
 
 
@@ -40,9 +41,26 @@ class TaskCard:
     status: str = "pending"
     recommended_nodes: list[str] = field(default_factory=list)
     reason: str = ""
+    review_dimension: str = "function_logic"
+    tags: list[str] = field(default_factory=list)
+    focus_points: list[str] = field(default_factory=list)
+    target_detail: dict[str, Any] = field(default_factory=dict)
+    initial_context: dict[str, Any] = field(default_factory=dict)
+    available_tools: list[str] = field(default_factory=list)
+    context_policy: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        legacy_target = data["target"]
+        data["legacy_target"] = legacy_target
+        data["target"] = self.target_detail or {
+            "type": "file" if str(legacy_target).endswith(".py") else "symbol",
+            "file_path": legacy_target if str(legacy_target).endswith(".py") else "",
+            "symbols": [],
+        }
+        if not data["focus_points"]:
+            data["focus_points"] = list(self.review_focus)
+        return data
 
 
 @dataclass(frozen=True)
@@ -62,6 +80,7 @@ class ReviewTaskPlan:
 class ReviewTaskGenerator:
     def __init__(self, context_service: ContextService) -> None:
         self.context_service = context_service
+        self.context_pack_builder = ContextPackBuilder(context_service)
 
     def generate(self) -> ReviewTaskPlan:
         """基于索引确定性生成评审任务，不调用模型服务。"""
@@ -90,6 +109,7 @@ class ReviewTaskGenerator:
                 ),
             ]
         )
+        tasks = [self._with_context_package(task) for task in tasks]
         return ReviewTaskPlan(
             repo_summary=repo_summary,
             review_tasks=tasks,
@@ -110,16 +130,24 @@ class ReviewTaskGenerator:
             }
 
         recommended = [
-            self.context_service.get_node_detail(node_id, include_source=False)
+            _node_summary(node)
             for node_id in task.recommended_nodes
+            for node in [self.context_service.store.get_code_node(self.context_service.repo_id, node_id)]
+            if node is not None
         ]
         return {
             "task_id": task.task_id,
             "seed_node_id": task.seed_node_id,
             "recommended_nodes": [item for item in recommended if item is not None],
             "related_files": task.related_files,
+            "available_tools": task.available_tools,
+            "context_policy": task.context_policy,
             "reason": task.reason,
         }
+
+    def get_task_package(self, task_id: str) -> dict[str, Any] | None:
+        task = next((item for item in self.generate().review_tasks if item.task_id == task_id), None)
+        return task.to_dict() if task else None
 
     def _build_repo_summary(
         self,
@@ -172,6 +200,10 @@ class ReviewTaskGenerator:
                     seed_node_id=route_node.node_id,
                     priority="high",
                     review_focus=_focus_for_target(route_node.name),
+                    review_dimension="security"
+                    if any(keyword in route_node.name.lower() for keyword in AUTH_KEYWORDS)
+                    else "function_logic",
+                    tags=_tags_for_route(route_node),
                     related_files=sorted(
                         {
                             route_node.file_path,
@@ -209,6 +241,8 @@ class ReviewTaskGenerator:
                     target=code_file.file_path,
                     seed_node_id=seed.node_id if seed else "",
                     priority="medium",
+                    review_dimension="security",
+                    tags=["config", "secret"],
                     review_focus=[
                         "敏感信息泄露",
                         "DEBUG 配置",
@@ -256,6 +290,8 @@ class ReviewTaskGenerator:
                     target=dirname,
                     seed_node_id=seed.node_id if seed else "",
                     priority="medium",
+                    review_dimension="function_logic",
+                    tags=_tags_for_path(dirname),
                     review_focus=["关键业务流程", "边界条件", "异常处理", "依赖调用关系"],
                     related_files=related_files,
                     recommended_nodes=[seed.node_id] if seed else [],
@@ -287,6 +323,8 @@ class ReviewTaskGenerator:
                     target=file_path,
                     seed_node_id=seed.node_id if seed else _slug(file_path),
                     priority=_file_review_priority(file_path),
+                    review_dimension=_dimension_for_file(file_path),
+                    tags=_tags_for_path(file_path),
                     review_focus=list(DEFAULT_FILE_REVIEW_FOCUS),
                     related_files=[file_path],
                     recommended_nodes=[seed.node_id] if seed else [],
@@ -294,6 +332,48 @@ class ReviewTaskGenerator:
                 )
             )
         return tasks
+
+    def _with_context_package(self, task: TaskCard) -> TaskCard:
+        target_detail = self._build_target_detail(task)
+        focus_points = task.focus_points or list(task.review_focus)
+        package = self.context_pack_builder.build_task_package(
+            {
+                **asdict(task),
+                "target": target_detail,
+                "review_dimension": task.review_dimension,
+                "tags": task.tags,
+                "focus_points": focus_points,
+            }
+        )
+        return replace(
+            task,
+            target_detail=target_detail,
+            focus_points=focus_points,
+            initial_context=package["initial_context"],
+            available_tools=package["available_tools"],
+            context_policy=package["context_policy"],
+        )
+
+    def _build_target_detail(self, task: TaskCard) -> dict[str, Any]:
+        file_path = task.target if task.target.endswith(".py") else ""
+        symbols: list[str] = []
+        if task.seed_node_id:
+            seed = self.context_service.store.get_code_node(
+                self.context_service.repo_id,
+                task.seed_node_id,
+            )
+            if seed is not None:
+                file_path = seed.file_path
+                symbols.append(seed.name)
+        for node_id in task.recommended_nodes:
+            node = self.context_service.store.get_code_node(self.context_service.repo_id, node_id)
+            if node is not None and node.name not in symbols:
+                symbols.append(node.name)
+        return {
+            "type": "file" if file_path else "symbol",
+            "file_path": file_path,
+            "symbols": symbols[:8],
+        }
 
     def _build_coverage_report(
         self,
@@ -388,6 +468,52 @@ def _file_review_priority(file_path: str) -> str:
     if any(keyword in normalized for keyword in HIGH_PRIORITY_FILE_KEYWORDS):
         return "high"
     return "low"
+
+
+def _dimension_for_file(file_path: str) -> str:
+    normalized = file_path.lower()
+    if any(keyword in normalized for keyword in HIGH_PRIORITY_FILE_KEYWORDS | AUTH_KEYWORDS):
+        return "security"
+    return "coding_style"
+
+
+def _tags_for_route(node: CodeNode) -> list[str]:
+    tags = ["api_entry", *_tags_for_path(node.file_path), *_tags_for_path(node.name)]
+    return _dedupe_strings(tags)
+
+
+def _tags_for_path(value: str) -> list[str]:
+    normalized = value.lower()
+    tags = []
+    for keyword in sorted(HIGH_PRIORITY_FILE_KEYWORDS | AUTH_KEYWORDS | IMPORTANT_DIRS):
+        if keyword in normalized:
+            tags.append(keyword)
+    if "config" in normalized or "settings" in normalized:
+        tags.append("config")
+    return _dedupe_strings(tags)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _node_summary(node: CodeNode) -> dict[str, Any]:
+    return {
+        "node_id": node.node_id,
+        "type": node.type,
+        "name": node.name,
+        "qualified_name": node.qualified_name,
+        "file_path": node.file_path,
+        "start_line": node.start_line,
+        "end_line": node.end_line,
+    }
 
 
 def _dedupe_tasks(tasks: list[TaskCard]) -> list[TaskCard]:

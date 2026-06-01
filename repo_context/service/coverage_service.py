@@ -1,6 +1,7 @@
-from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
+from repo_context.service.context_pack_builder import ContextPackBuilder
 from repo_context.service.context_service import ContextService
 from repo_context.task.review_task_generator import (
     DEFAULT_FILE_REVIEW_FOCUS,
@@ -17,9 +18,10 @@ class CoverageService:
     ) -> None:
         self.context_service = context_service
         self.task_generator = task_generator
+        self.context_pack_builder = ContextPackBuilder(context_service)
 
     def get_coverage_report(self) -> dict[str, Any]:
-        """基于工具实际使用记录生成覆盖率报告。"""
+        """基于 context_usage 记录生成实际覆盖率报告。"""
         repo_id = self.context_service.repo_id
         files = self.context_service.store.list_code_files(repo_id)
         nodes = self.context_service.store.list_code_nodes(repo_id)
@@ -81,10 +83,27 @@ class CoverageService:
             "uncovered_entrypoints": sorted(
                 {node.name for node in route_nodes} - set(covered_entrypoints)
             ),
+            "usage_records": [
+                {
+                    "task_id": item.task_id,
+                    "agent": item.agent,
+                    "review_dimension": item.review_dimension,
+                    "tool_name": item.tool_name,
+                    "target_type": item.target_type,
+                    "target_name": item.target_name,
+                    "node_id": item.node_id,
+                    "file_path": item.file_path,
+                    "start_line": item.start_line,
+                    "end_line": item.end_line,
+                    "lines_returned": item.lines_returned,
+                    "created_at": item.used_at,
+                }
+                for item in usage_records
+            ],
         }
 
     def generate_uncovered_file_reviews(self) -> list[TaskCard]:
-        """为实际未被工具访问的源码文件生成补充验收任务。"""
+        """为实际未被工具访问的源码文件生成带完整上下文包的补充任务。"""
         report = self.get_coverage_report()
         nodes = self.context_service.store.list_code_nodes(self.context_service.repo_id)
         module_by_file = {node.file_path: node for node in nodes if node.type == "module"}
@@ -92,18 +111,42 @@ class CoverageService:
 
         for file_path in report["uncovered_files"]:
             seed = module_by_file.get(file_path)
+            task = TaskCard(
+                task_id=f"task_uncovered_file_{_slug(file_path)}",
+                repo_id=self.context_service.repo_id,
+                task_type="uncovered_file_review",
+                target=file_path,
+                seed_node_id=seed.node_id if seed else _slug(file_path),
+                priority="medium",
+                review_dimension="coding_style",
+                tags=["uncovered_file"],
+                review_focus=list(DEFAULT_FILE_REVIEW_FOCUS),
+                related_files=[file_path],
+                recommended_nodes=[seed.node_id] if seed else [],
+                reason="阶段 7 覆盖率追踪发现该源码文件尚未被上下文工具访问。",
+            )
+            target_detail = {
+                "type": "file",
+                "file_path": file_path,
+                "symbols": [seed.name] if seed else [],
+            }
+            package = self.context_pack_builder.build_task_package(
+                {
+                    **task.to_dict(),
+                    "target": target_detail,
+                    "review_dimension": task.review_dimension,
+                    "tags": task.tags,
+                    "focus_points": task.review_focus,
+                }
+            )
             tasks.append(
-                TaskCard(
-                    task_id=f"task_uncovered_file_{_slug(file_path)}",
-                    repo_id=self.context_service.repo_id,
-                    task_type="uncovered_file_review",
-                    target=file_path,
-                    seed_node_id=seed.node_id if seed else _slug(file_path),
-                    priority="medium",
-                    review_focus=list(DEFAULT_FILE_REVIEW_FOCUS),
-                    related_files=[file_path],
-                    recommended_nodes=[seed.node_id] if seed else [],
-                    reason="阶段 7 覆盖率追踪发现该源码文件尚未被上下文工具访问。",
+                replace(
+                    task,
+                    target_detail=target_detail,
+                    focus_points=task.review_focus,
+                    initial_context=package["initial_context"],
+                    available_tools=package["available_tools"],
+                    context_policy=package["context_policy"],
                 )
             )
 

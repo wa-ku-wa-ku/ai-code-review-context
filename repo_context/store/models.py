@@ -50,3 +50,10 @@ class ContextUsage:
     node_id: str | None
     file_path: str | None
     used_at: str
+    agent: str | None = None
+    review_dimension: str | None = None
+    target_type: str | None = None
+    target_name: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    lines_returned: int | None = None
