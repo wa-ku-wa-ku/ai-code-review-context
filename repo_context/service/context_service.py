@@ -621,15 +621,19 @@ class ContextService:
         return centers[:8]
 
     def _task_allowed_node_ids(self, task: Any) -> set[str]:
-        initial_context = getattr(task, "initial_context", {}) or {}
-        graph = initial_context.get("call_graph_slice", {})
-        graph_node_ids = {
-            node["node_id"]
-            for node in graph.get("nodes", [])
-            if isinstance(node, dict) and isinstance(node.get("node_id"), str)
-        }
-        if graph_node_ids:
-            return graph_node_ids
+        centers = self._task_center_nodes(task)
+        policy = getattr(task, "context_policy", {}) or {}
+        max_graph_depth = policy.get("max_graph_depth", 2)
+        if centers:
+            local_graph = self.build_task_local_graph_slice(
+                [node.node_id for node in centers],
+                depth=max_graph_depth,
+            )
+            return {
+                node["node_id"]
+                for node in local_graph.get("nodes", [])
+                if isinstance(node, dict) and isinstance(node.get("node_id"), str)
+            }
 
         related_files = set(getattr(task, "related_files", []) or [])
         target_detail = getattr(task, "target_detail", {}) or {}
@@ -639,7 +643,7 @@ class ContextService:
         return {
             node.node_id
             for node in self.store.list_code_nodes(self.repo_id)
-            if not related_files or node.file_path in related_files
+            if related_files and node.file_path in related_files
         }
 
     @staticmethod

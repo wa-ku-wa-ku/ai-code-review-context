@@ -207,20 +207,25 @@ print(coverage)
   "tags": ["api_entry", "auth"],
   "focus_points": ["输入校验", "身份认证", "异常处理"],
   "initial_context": {
-    "file_snippets": [],
-    "related_symbols": [],
-    "call_graph_slice": {
-      "graph_scope": "local",
-      "center": "app.api.auth.login",
-      "depth": 2,
-      "nodes": [],
-      "edges": []
+    "type": "task_entry",
+    "file_path": "app/api/auth.py",
+    "symbols": ["login"],
+    "review_dimension": "security",
+    "suggested_next_tool": "get_task_graph_slice",
+    "suggested_next_params": {
+      "task_id": "task_route_post_login",
+      "depth": 2
     },
-    "requirement_refs": []
+    "context_scope": {
+      "task_local": true,
+      "allow_full_graph": false,
+      "prefer_graph_slice_first": true
+    }
   },
   "available_tools": [
     "get_file_snippet",
     "get_node_detail",
+    "get_task_graph_slice",
     "get_callers",
     "get_callees",
     "trace_call_chain",
@@ -231,16 +236,21 @@ print(coverage)
     "max_depth": 2,
     "max_snippet_lines": 120,
     "max_files": 5,
-    "allow_expand": true
+    "allow_expand": true,
+    "allow_task_graph_slice": true,
+    "allow_full_graph": false,
+    "prefer_graph_slice_first": true,
+    "max_graph_depth": 2
   }
 }
 ```
 
 重点约束：
 
-- `initial_context` 只放少量起始上下文。
-- `call_graph_slice` 是任务局部图，不是完整仓库 graph。
-- agent 需要更多上下文时，再调用 `available_tools` 中的接口逐步扩展。
+- `initial_context` 只放任务入口、关注点和工具引导，不再预塞源码片段或调用图。
+- agent 应先调用 `get_task_graph_slice` / `/context/tasks/{task_id}/graph-slice` 获取 task-local graph slice。
+- `get_task_graph_slice` 只返回任务局部图，完整仓库 graph 不对下游暴露。
+- agent 需要更多源码上下文时，再调用 `related-context`、`file-snippet`、`node-detail`、`callers`、`callees` 逐步扩展。
 - 每次上下文读取都会尽量写入 `context_usage`，用于覆盖率统计。
 
 ## ContextService 工具
@@ -249,6 +259,11 @@ print(coverage)
 
 ```python
 matches = context_service.search_symbol("login")
+
+graph_slice = context_service.get_task_graph_slice(
+    task_id="task_route_post_login",
+    depth=2,
+)
 
 node = context_service.get_node_detail(
     symbol_name="login",

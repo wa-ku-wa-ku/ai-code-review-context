@@ -21,13 +21,20 @@ def test_directional_task_package_contains_context_controls(
 
     assert package["review_dimension"] == "security"
     assert package["target"]["file_path"] == "app/api/auth.py"
-    assert package["initial_context"]["file_snippets"]
-    assert package["initial_context"]["call_graph_slice"]["graph_scope"] == "local"
+    assert package["initial_context"]["type"] == "task_entry"
+    assert package["initial_context"]["file_path"] == "app/api/auth.py"
+    assert package["initial_context"]["suggested_next_tool"] == "get_task_graph_slice"
+    assert "file_snippets" not in package["initial_context"]
+    assert "call_graph_slice" not in package["initial_context"]
     assert "get_file_snippet" in package["available_tools"]
     assert "get_node_detail" in package["available_tools"]
+    assert "get_task_graph_slice" in package["available_tools"]
     assert "get_callees" in package["available_tools"]
     assert "get_related_context" in package["available_tools"]
     assert package["context_policy"]["allow_expand"] is True
+    assert package["context_policy"]["allow_task_graph_slice"] is True
+    assert package["context_policy"]["allow_full_graph"] is False
+    assert package["context_policy"]["prefer_graph_slice_first"] is True
     _assert_json_serializable(package)
 
 
@@ -36,10 +43,10 @@ def test_task_local_graph_slice_is_limited_to_task_nodes(
     task_generator: ReviewTaskGenerator,
 ) -> None:
     task = next(item for item in task_generator.generate().review_tasks if item.task_id == "task_route_post_login")
-    graph = task.initial_context["call_graph_slice"]
+    graph = context_service.get_task_graph_slice(task.task_id, depth=2)
     full_edge_count = len(context_service.store.list_code_edges(context_service.repo_id))
 
-    assert graph["graph_scope"] == "local"
+    assert graph["graph_scope"] == "task-local"
     assert graph["depth"] <= 2
     assert len(graph["edges"]) <= full_edge_count
     assert "nodes" in graph
@@ -59,7 +66,8 @@ def test_function_logic_context_contains_call_graph(task_generator: ReviewTaskGe
     task = next(item for item in task_generator.generate().review_tasks if item.task_type == "module_review")
 
     assert task.review_dimension == "function_logic"
-    assert "call_graph_slice" in task.initial_context
+    assert task.initial_context["suggested_next_tool"] == "get_task_graph_slice"
+    assert "call_graph_slice" not in task.initial_context
 
 
 def test_builder_returns_empty_graph_for_missing_target(context_service: ContextService) -> None:

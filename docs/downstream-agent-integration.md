@@ -10,10 +10,11 @@
 2. 从返回值中读取 `review_tasks`。
 3. 下游 agent 按任务逐个处理，不要一次性读取完整仓库源码。
 4. 对每个任务，调用 `/context/task-package/{task_id}` 获取完整任务包。
-5. 先消费 `initial_context`。
-6. 如果上下文不足，再调用 `available_tools` 对应接口扩展上下文。
-7. 每次上下文查询会自动写入 `context_usage`。
-8. 处理完成后，下游系统可读取 `/demo/{repo_id}/coverage` 查看实际覆盖率。
+5. 先消费轻量 `initial_context`，确认目标、关注点和 `suggested_next_tool`。
+6. 优先调用 `/context/tasks/{task_id}/graph-slice` 获取 task-local graph slice。
+7. 如果上下文不足，再调用 `available_tools` 对应接口扩展上下文。
+8. 每次上下文查询会自动写入 `context_usage`。
+9. 处理完成后，下游系统可读取 `/demo/{repo_id}/coverage` 查看实际覆盖率。
 
 ## 1. 构建索引
 
@@ -64,7 +65,11 @@ Content-Type: application/json
     "max_depth": 2,
     "max_snippet_lines": 120,
     "max_files": 6,
-    "allow_expand": true
+    "allow_expand": true,
+    "allow_task_graph_slice": true,
+    "allow_full_graph": false,
+    "prefer_graph_slice_first": true,
+    "max_graph_depth": 2
   }
 }
 ```
@@ -94,13 +99,29 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 
 - `target`：本任务目标文件和目标符号。
 - `focus_points`：本任务建议关注点。
-- `initial_context.file_snippets`：初始源码片段。
-- `initial_context.related_symbols`：初始相关符号。
-- `initial_context.call_graph_slice`：任务局部调用图。
+- `initial_context.type`：固定为 `task_entry`，表示这是轻量任务入口。
+- `initial_context.suggested_next_tool`：通常为 `get_task_graph_slice`。
+- `initial_context.file_path` / `symbols`：下游 agent 的首轮关注目标。
 - `available_tools`：允许继续调用的上下文工具。
 - `context_policy`：上下文扩展上限。
 
-注意：`call_graph_slice` 只包含任务局部图，不是完整仓库调用图。
+注意：阶段 9 后，`initial_context` 不再预塞源码片段、相关符号或调用图。下游 agent 应通过 graph slice 和上下文工具按需读取代码。
+
+### 获取任务局部图
+
+```http
+GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
+```
+
+返回重点字段：
+
+- `nodes`：任务范围内节点。
+- `edges`：任务范围内调用关系。
+- `boundary_nodes`：超出任务范围或深度限制的相邻节点。
+- `truncated`：是否发生截断。
+- `graph_scope`：固定为 `task-local`。
+
+约束：该接口只返回任务局部图，不返回完整仓库调用图。
 
 ## 4. 按需扩展上下文
 

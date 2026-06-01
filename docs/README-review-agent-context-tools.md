@@ -21,7 +21,8 @@
 | --- | --- | --- | --- |
 | **必须调用** | `GET /context/task-package/{task_id}` | 每个评审任务开始前调用 | 获取任务目标、初始上下文、可用工具和上下文限制 |
 | **必须调用** | `POST /context/task-feedback` | 每个评审任务完成、阻塞或跳过时调用 | 反馈任务状态、上下文是否足够、是否需要补充上下文 |
-| **必须优先支持** | `POST /context/related-context` | 初始上下文不足时优先调用 | 获取任务相关的源码片段、符号和局部调用图 |
+| **必须优先支持** | `GET /context/tasks/{task_id}/graph-slice` | 阅读任务包后优先调用 | 获取 task-local graph slice 总览，不暴露完整仓库图 |
+| **必须优先支持** | `POST /context/related-context` | 看过局部图后仍需上下文时调用 | 获取任务相关的源码片段、符号和局部调用图 |
 | **必须支持** | `GET /context/file-snippet` | 需要精确源码时调用 | 按文件路径和行号读取源码片段 |
 | **必须支持** | `GET /context/node-detail` | 需要理解函数/类时调用 | 获取符号代码、位置、调用者和被调用者 |
 | **按需支持** | `GET /context/callees` | 需要向下追踪调用链时调用 | 查询当前符号调用了哪些符号 |
@@ -44,17 +45,20 @@
 1. 工程服务调用 /context/index 构建仓库索引，得到 review_tasks
 2. 调度器把单个 task 分配给对应 review agent
 3. agent 调用 /context/task-package/{task_id} 获取任务包
-4. agent 优先阅读 initial_context
-5. agent 判断上下文是否足够
-6. 上下文不足时，优先调用 /context/related-context
-7. 需要精确信息时，再调用 file-snippet / node-detail / callers / callees
-8. 任务完成、阻塞或跳过时，调用 /context/task-feedback 反馈状态
+4. agent 优先阅读轻量 initial_context，确认目标、关注点和 suggested_next_tool
+5. agent 调用 /context/tasks/{task_id}/graph-slice 获取任务局部图总览
+6. agent 根据局部图选择重点节点
+7. 上下文不足时，调用 /context/related-context 补充源码片段和相关符号
+8. 需要精确信息时，再调用 file-snippet / node-detail / callers / callees
+9. 任务完成、阻塞或跳过时，调用 /context/task-feedback 反馈状态
 ```
 
 推荐顺序：
 
 ```text
 task_package.initial_context
+        ↓
+/context/tasks/{task_id}/graph-slice
         ↓
 /context/related-context
         ↓
@@ -87,7 +91,11 @@ task_package.initial_context
 GET /context/task-package/task_route_post_login?repo_id=sample-repo
 ```
 
-如果任务包中的 `initial_context` 已经包含 `login()` 的入口代码，agent 先基于这部分上下文评审。
+任务包中的 `initial_context` 是轻量入口提示，agent 先读取目标、关注点和 `suggested_next_tool`，然后调用局部图接口：
+
+```http
+GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
+```
 
 如果发现 `login()` 调用了 `authenticate()`，但当前上下文缺少认证函数实现，agent 再调用：
 
@@ -128,6 +136,7 @@ Content-Type: application/json
 | 接口 | 参数位置 | 主要请求参数 | 主要返回结果 |
 | --- | --- | --- | --- |
 | `GET /context/task-package/{task_id}` | Path + Query | `task_id`, `repo_id` | `target`, `initial_context`, `available_tools`, `context_policy` |
+| `GET /context/tasks/{task_id}/graph-slice` | Path + Query | `task_id`, `repo_id`, `depth` | `nodes`, `edges`, `boundary_nodes`, `truncated`, `target`, `depth` |
 | `POST /context/related-context` | Body | `repo_id`, `task_id`, `target_file`, `review_dimension`, `tags`, `max_depth`, `max_files` | `snippets`, `related_symbols`, `call_graph_slice` |
 | `GET /context/file-snippet` | Query | `repo_id`, `file_path`, `start_line`, `end_line`, `task_id`, `review_dimension` | `content`, `start_line`, `end_line` |
 | `GET /context/node-detail` | Query | `repo_id`, `symbol_name`, `task_id`, `review_dimension` | `code`, `file_path`, `callers`, `callees` |
@@ -166,7 +175,7 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 | `priority` | string | 任务优先级 |
 | `target` | object | 任务目标文件和目标符号 |
 | `focus_points` | array | 建议关注点 |
-| `initial_context` | object | 初始上下文，包含源码片段、相关符号和局部调用图 |
+| `initial_context` | object | 轻量任务入口，包含目标、关注点、`suggested_next_tool` 和上下文范围提示 |
 | `available_tools` | array | 当前任务允许继续调用的上下文工具 |
 | `context_policy` | object | 上下文扩展上限，例如最大深度、最大文件数、最大行数 |
 
@@ -185,19 +194,24 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
   },
   "focus_points": ["输入校验", "身份认证", "异常处理"],
   "initial_context": {
-    "file_snippets": [],
-    "related_symbols": [],
-    "call_graph_slice": {
-      "graph_scope": "local",
-      "center": "app.api.auth.login",
-      "depth": 1,
-      "nodes": [],
-      "edges": []
+    "type": "task_entry",
+    "file_path": "app/api/auth.py",
+    "symbols": ["POST /login", "login"],
+    "suggested_next_tool": "get_task_graph_slice",
+    "suggested_next_params": {
+      "task_id": "task_route_post_login",
+      "depth": 2
+    },
+    "context_scope": {
+      "task_local": true,
+      "allow_full_graph": false,
+      "prefer_graph_slice_first": true
     }
   },
   "available_tools": [
     "get_file_snippet",
     "get_node_detail",
+    "get_task_graph_slice",
     "get_related_context",
     "get_callers",
     "get_callees"
@@ -206,7 +220,11 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
     "max_depth": 2,
     "max_snippet_lines": 120,
     "max_files": 6,
-    "allow_expand": true
+    "allow_expand": true,
+    "allow_task_graph_slice": true,
+    "allow_full_graph": false,
+    "prefer_graph_slice_first": true,
+    "max_graph_depth": 2
   }
 }
 ```
@@ -215,9 +233,49 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 
 - `target`：确定本任务评审的文件和符号；
 - `focus_points`：确定评审关注点；
-- `initial_context`：作为第一轮上下文；
+- `initial_context`：只作为任务入口和工具引导，不承载完整源码或完整调用图；
 - `available_tools`：决定后续可以调用哪些上下文工具；
 - `context_policy`：控制扩展上下文范围。
+
+## 4.1 任务局部图接口：GET /context/tasks/{task_id}/graph-slice
+
+### 作用
+
+下游 agent 应在读取任务包后优先调用该接口，先获取任务范围内的调用关系总览，再决定继续读取哪些源码。该接口只返回 task-local graph slice，不暴露完整仓库 graph。
+
+### 请求参数
+
+| 参数 | 位置 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- | --- |
+| `task_id` | Path | string | 是 | 当前评审任务 ID |
+| `repo_id` | Query | string | 是 | 当前仓库 ID |
+| `depth` | Query | integer | 否 | 局部图遍历深度，默认 2，并受 `context_policy.max_graph_depth` 限制 |
+
+### 请求示例
+
+```http
+GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
+```
+
+### 返回字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | string | 当前任务 ID |
+| `target` | object | 任务目标和评审维度 |
+| `depth` | integer | 实际使用的图深度 |
+| `nodes` | array | 任务范围内节点 |
+| `edges` | array | 任务范围内边 |
+| `boundary_nodes` | array | 超出任务范围或深度限制的相邻节点 |
+| `truncated` | boolean | 是否因范围或深度限制发生截断 |
+| `graph_scope` | string | 固定为 `task-local` |
+
+### 下游重点读取
+
+- `nodes`：优先选择 `is_target=true` 或与目标相邻的节点继续查看源码；
+- `edges`：理解任务内调用方向；
+- `boundary_nodes`：识别被限制在局部图之外、必要时通过反馈说明需要更多上下文；
+- `truncated`：判断当前图是否受 depth / task-local policy 限制。
 
 ---
 

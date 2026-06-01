@@ -128,30 +128,41 @@ def test_context_api_related_context_and_task_package_are_local(tmp_path: Path) 
             "max_files": 2,
         },
     )
-    coverage = client.get("/demo/api-context-package/coverage").json()["usage_coverage_report"]
-
     assert full_package_response.status_code == 200
     full_package = full_package_response.json()
     assert full_package["initial_context"]
     assert full_package["available_tools"]
     assert full_package["context_policy"]["allow_expand"] is True
-    assert full_package["initial_context"]["call_graph_slice"]["graph_scope"] == "local"
-    assert len(full_package["initial_context"]["call_graph_slice"]["edges"]) <= len(
-        task_package["initial_context"]["call_graph_slice"]["edges"]
+    assert full_package["initial_context"]["type"] == "task_entry"
+    assert full_package["initial_context"]["suggested_next_tool"] == "get_task_graph_slice"
+    assert "call_graph_slice" not in full_package["initial_context"]
+    graph_response = client.get(
+        "/context/tasks/task_route_post_login/graph-slice",
+        params={"repo_id": "api-context-package", "depth": 1},
     )
+    assert graph_response.status_code == 200
+    task_graph = graph_response.json()
+    assert task_graph["graph_scope"] == "task-local"
+    assert task_graph["nodes"]
+    assert "call_graph_slice" not in task_package["initial_context"]
+    assert len(task_graph["nodes"]) < 20
 
     assert related_response.status_code == 200
     related = related_response.json()
+    coverage = client.get("/demo/api-context-package/coverage").json()["usage_coverage_report"]
     assert related["snippets"]
     assert related["related_symbols"]
     assert related["call_graph_slice"]["graph_scope"] == "local"
     assert len(related["related_files"]) <= 2
-    assert len(related["call_graph_slice"]["nodes"]) <= len(
-        full_package["initial_context"]["call_graph_slice"]["nodes"]
-    )
+    assert len(related["call_graph_slice"]["nodes"]) <= len(task_graph["nodes"])
     assert any(
         item["tool_name"] == "get_related_context"
         and item["target_type"] == "batch_context"
+        for item in coverage["usage_records"]
+    )
+    assert any(
+        item["tool_name"] == "get_task_graph_slice"
+        and item["target_type"] == "graph_slice"
         for item in coverage["usage_records"]
     )
 

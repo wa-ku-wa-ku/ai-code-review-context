@@ -1040,14 +1040,14 @@ _DEMO_HTML = """
       }
       box.innerHTML = currentTasks.map(task => {
         const target = normalizeTarget(task);
-        const graph = task.initial_context?.call_graph_slice || {};
+        const entry = task.initial_context || {};
         return `
           <article class="task-card ${task.task_id === activeTaskId ? "active" : ""}" onclick="selectTask('${escapeAttr(task.task_id)}')">
             <div class="task-title">${escapeHtml(humanTaskType(task.task_type))}</div>
             <div class="task-meta">
               <span class="pill ${task.priority}">${escapeHtml(humanPriority(task.priority))}</span>
               <span class="pill ${dimensionClass(task.review_dimension)}">${escapeHtml(humanDimension(task.review_dimension))}</span>
-              <span class="pill">${graph.nodes?.length || 0} 点 / ${graph.edges?.length || 0} 边</span>
+              <span class="pill">${escapeHtml(entry.suggested_next_tool || "context tools")}</span>
             </div>
             <div class="task-target">
               <div><strong>目标文件：</strong>${escapeHtml(target.file || "未指定")}</div>
@@ -1091,8 +1091,7 @@ _DEMO_HTML = """
         const pkg = await requestJson(`/context/task-package/${encodeURIComponent(taskId)}?repo_id=${encodeURIComponent(currentRepoId)}`);
         lastSelectedPackage = pkg;
         renderTaskDetail(task || pkg, pkg);
-        renderContextPane(pkg);
-        showRaw(pkg);
+        await renderContextPane(pkg);
         setStatus(`已打开任务：${taskId}`);
       } catch (error) {
         setStatus("读取任务包失败。");
@@ -1102,7 +1101,6 @@ _DEMO_HTML = """
 
     function renderTaskDetail(task, pkg) {
       const target = normalizeTarget(pkg || task);
-      const graph = pkg.initial_context?.call_graph_slice || {};
       document.getElementById("detailTitle").textContent = humanTaskType(pkg.task_type);
       document.getElementById("detail").innerHTML = `
         <div class="detail-grid">
@@ -1119,9 +1117,9 @@ _DEMO_HTML = """
           </div>
           <div class="info-box">
             <h3>上下文范围</h3>
-            <p>初始片段：${pkg.initial_context?.file_snippets?.length || 0} 个</p>
-            <p>相关符号：${pkg.initial_context?.related_symbols?.length || 0} 个</p>
-            <p>局部调用图：${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边，depth=${graph.depth ?? "-"}</p>
+            <p>初始上下文类型：${escapeHtml(pkg.initial_context?.type || "task_entry")}</p>
+            <p>建议下一步：${escapeHtml(pkg.initial_context?.suggested_next_tool || "get_task_graph_slice")}</p>
+            <p>局部图深度上限：depth=${pkg.context_policy?.max_graph_depth ?? "-"}</p>
             <p>策略：最多 ${pkg.context_policy?.max_files ?? "-"} 个文件，片段最多 ${pkg.context_policy?.max_snippet_lines ?? "-"} 行。</p>
           </div>
         </div>
@@ -1137,23 +1135,24 @@ _DEMO_HTML = """
       `;
     }
 
-    function renderContextPane(pkg) {
-      const graph = pkg.initial_context?.call_graph_slice || { nodes: [], edges: [] };
-      const snippets = pkg.initial_context?.file_snippets || [];
-      const symbols = pkg.initial_context?.related_symbols || [];
+    async function renderContextPane(pkg) {
+      const depth = pkg.context_policy?.max_graph_depth ?? 2;
+      const graph = await requestJson(`/context/tasks/${encodeURIComponent(pkg.task_id)}/graph-slice?repo_id=${encodeURIComponent(currentRepoId)}&depth=${encodeURIComponent(depth)}`);
       document.getElementById("contextPane").innerHTML = `
         <div class="info-box">
           <h3>Task-local graph slice</h3>
           <p>只展示当前任务附近的调用关系，不返回完整仓库图。</p>
-          <p>${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边。</p>
+          <p>${graph.nodes?.length || 0} 个节点，${graph.edges?.length || 0} 条边，边界节点 ${graph.boundary_nodes?.length || 0} 个。</p>
           <pre>${escapeHtml(JSON.stringify(graph, null, 2))}</pre>
         </div>
         <div class="info-box" style="margin-top:12px">
-          <h3>初始上下文</h3>
-          <p>源码片段 ${snippets.length} 个，相关符号 ${symbols.length} 个。</p>
-          <pre>${escapeHtml(JSON.stringify({ snippets, symbols }, null, 2))}</pre>
+          <h3>Lightweight initial_context</h3>
+          <p>任务包只保留入口、关注点和工具引导，源码和调用图按需读取。</p>
+          <pre>${escapeHtml(JSON.stringify(pkg.initial_context || {}, null, 2))}</pre>
         </div>
       `;
+      showRaw({ task_package: pkg, graph_slice: graph });
+      await refreshCoverage();
     }
 
     async function loadRelatedContext() {

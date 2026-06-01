@@ -52,7 +52,10 @@ def test_get_task_graph_slice_limits_to_task_files(
     )
     allowed_node_ids = {
         node["node_id"]
-        for node in task.initial_context["call_graph_slice"]["nodes"]
+        for node in context_service.build_task_local_graph_slice(
+            [node.node_id for node in context_service._task_center_nodes(task)],
+            depth=task.context_policy["max_graph_depth"],
+        )["nodes"]
     }
 
     graph = context_service.get_task_graph_slice(task.task_id, depth=2)
@@ -98,6 +101,9 @@ def test_task_package_exposes_graph_slice_tool_and_policy(
     package = task.to_dict()
 
     assert "get_task_graph_slice" in package["available_tools"]
+    assert package["initial_context"]["type"] == "task_entry"
+    assert package["initial_context"]["suggested_next_tool"] == "get_task_graph_slice"
+    assert "call_graph_slice" not in package["initial_context"]
     assert package["context_policy"]["allow_task_graph_slice"] is True
     assert package["context_policy"]["allow_full_graph"] is False
     assert package["context_policy"]["prefer_graph_slice_first"] is True
