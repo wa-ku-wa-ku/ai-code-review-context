@@ -9,6 +9,8 @@ from repo_context.store.models import CodeFile, CodeNode
 IMPORTANT_DIRS = {"services", "repositories", "utils", "models", "schemas", "core"}
 CONFIG_NAMES = {"config.py", "settings.py", "database.py", "security.py", ".env.example"}
 AUTH_KEYWORDS = {"auth", "login", "token", "password", "authenticate"}
+HIGH_PRIORITY_FILE_KEYWORDS = {"auth", "security", "database", "token", "permission"}
+DEFAULT_FILE_REVIEW_FOCUS = ["基础代码质量", "异常处理", "输入输出边界", "可维护性"]
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class TaskCard:
     related_files: list[str]
     status: str = "pending"
     recommended_nodes: list[str] = field(default_factory=list)
+    reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -46,11 +49,13 @@ class TaskCard:
 class ReviewTaskPlan:
     repo_summary: RepoSummary
     review_tasks: list[TaskCard]
+    coverage_report: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "repo_summary": self.repo_summary.to_dict(),
             "review_tasks": [task.to_dict() for task in self.review_tasks],
+            "coverage_report": self.coverage_report,
         }
 
 
@@ -63,12 +68,33 @@ class ReviewTaskGenerator:
         files = self.context_service.store.list_code_files(self.context_service.repo_id)
         nodes = self.context_service.store.list_code_nodes(self.context_service.repo_id)
         repo_summary = self._build_repo_summary(files, nodes)
-        tasks = [
+        base_tasks = [
             *self._entrypoint_tasks(nodes),
             *self._config_tasks(files, nodes),
             *self._module_tasks(files, nodes),
         ]
-        return ReviewTaskPlan(repo_summary=repo_summary, review_tasks=tasks)
+        deduped_base_tasks = _dedupe_tasks(base_tasks)
+        coverage_report = self._build_coverage_report(
+            repo_summary=repo_summary,
+            files=files,
+            nodes=nodes,
+            tasks=deduped_base_tasks,
+        )
+        tasks = _dedupe_tasks(
+            [
+                *deduped_base_tasks,
+                *self._fallback_file_tasks(
+                    files=files,
+                    nodes=nodes,
+                    uncovered_python_files=coverage_report["uncovered_python_files"],
+                ),
+            ]
+        )
+        return ReviewTaskPlan(
+            repo_summary=repo_summary,
+            review_tasks=tasks,
+            coverage_report=coverage_report,
+        )
 
     def get_related_context(self, task_id: str) -> dict[str, Any]:
         """按 task_id 返回推荐上下文目标，不默认返回大段源码。"""
@@ -80,6 +106,7 @@ class ReviewTaskGenerator:
                 "seed_node_id": None,
                 "recommended_nodes": [],
                 "related_files": [],
+                "reason": "task not found",
             }
 
         recommended = [
@@ -91,6 +118,7 @@ class ReviewTaskGenerator:
             "seed_node_id": task.seed_node_id,
             "recommended_nodes": [item for item in recommended if item is not None],
             "related_files": task.related_files,
+            "reason": task.reason,
         }
 
     def _build_repo_summary(
@@ -155,6 +183,7 @@ class ReviewTaskGenerator:
                         }
                     ),
                     recommended_nodes=[route_node.node_id, *recommended_nodes],
+                    reason="API 入口点任务，建议从路由映射的 handler 及其下游调用开始审查。",
                 )
             )
 
@@ -189,6 +218,7 @@ class ReviewTaskGenerator:
                     ],
                     related_files=[code_file.file_path],
                     recommended_nodes=[seed.node_id] if seed else [],
+                    reason="配置文件任务，建议关注敏感配置、调试开关和连接参数。",
                 )
             )
 
@@ -229,10 +259,92 @@ class ReviewTaskGenerator:
                     review_focus=["关键业务流程", "边界条件", "异常处理", "依赖调用关系"],
                     related_files=related_files,
                     recommended_nodes=[seed.node_id] if seed else [],
+                    reason="重要模块任务，建议查看模块入口文件和相邻调用关系。",
                 )
             )
 
         return tasks
+
+    def _fallback_file_tasks(
+        self,
+        files: list[CodeFile],
+        nodes: list[CodeNode],
+        uncovered_python_files: list[str],
+    ) -> list[TaskCard]:
+        by_file = _module_node_by_file(nodes)
+        tasks: list[TaskCard] = []
+        for file_path in uncovered_python_files:
+            code_file = next((item for item in files if item.file_path == file_path), None)
+            if code_file is None or code_file.is_test:
+                continue
+
+            seed = by_file.get(file_path)
+            tasks.append(
+                TaskCard(
+                    task_id=f"task_file_{_slug(file_path)}",
+                    repo_id=self.context_service.repo_id,
+                    task_type="file_review",
+                    target=file_path,
+                    seed_node_id=seed.node_id if seed else _slug(file_path),
+                    priority=_file_review_priority(file_path),
+                    review_focus=list(DEFAULT_FILE_REVIEW_FOCUS),
+                    related_files=[file_path],
+                    recommended_nodes=[seed.node_id] if seed else [],
+                    reason="兜底文件任务，用于覆盖未被入口、配置或模块任务覆盖的 Python 源码文件。",
+                )
+            )
+        return tasks
+
+    def _build_coverage_report(
+        self,
+        repo_summary: RepoSummary,
+        files: list[CodeFile],
+        nodes: list[CodeNode],
+        tasks: list[TaskCard],
+    ) -> dict[str, Any]:
+        python_files = sorted(
+            item.file_path
+            for item in files
+            if item.language == "python" and not item.is_test
+        )
+        config_files = sorted(repo_summary.config_files)
+        entrypoints = sorted(item["method_path"] for item in repo_summary.entrypoints)
+
+        covered_python_files = sorted(
+            {
+                file_path
+                for task in tasks
+                for file_path in task.related_files
+                if file_path in python_files
+            }
+        )
+        covered_entrypoints = sorted(
+            task.target for task in tasks if task.task_type == "entrypoint_review"
+        )
+        covered_config_files = sorted(
+            task.target for task in tasks if task.task_type == "config_review"
+        )
+
+        total_python_files = len(python_files)
+        coverage_ratio = (
+            len(covered_python_files) / total_python_files
+            if total_python_files
+            else 1.0
+        )
+
+        return {
+            "repo_id": self.context_service.repo_id,
+            "total_python_files": total_python_files,
+            "covered_python_files": covered_python_files,
+            "uncovered_python_files": sorted(set(python_files) - set(covered_python_files)),
+            "total_entrypoints": len(entrypoints),
+            "covered_entrypoints": covered_entrypoints,
+            "uncovered_entrypoints": sorted(set(entrypoints) - set(covered_entrypoints)),
+            "total_config_files": len(config_files),
+            "covered_config_files": covered_config_files,
+            "uncovered_config_files": sorted(set(config_files) - set(covered_config_files)),
+            "coverage_ratio": coverage_ratio,
+        }
 
 
 def _detect_framework(route_nodes: list[CodeNode]) -> str:
@@ -269,3 +381,22 @@ def _module_node_by_file(nodes: list[CodeNode]) -> dict[str, CodeNode]:
 def _slug(value: str) -> str:
     chars = [char.lower() if char.isalnum() else "_" for char in value]
     return "_".join(part for part in "".join(chars).strip("_").split("_") if part)
+
+
+def _file_review_priority(file_path: str) -> str:
+    normalized = file_path.lower()
+    if any(keyword in normalized for keyword in HIGH_PRIORITY_FILE_KEYWORDS):
+        return "high"
+    return "low"
+
+
+def _dedupe_tasks(tasks: list[TaskCard]) -> list[TaskCard]:
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[TaskCard] = []
+    for task in tasks:
+        key = (task.repo_id, task.task_type, task.target)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(task)
+    return sorted(deduped, key=lambda item: (item.task_type, item.target, item.task_id))
