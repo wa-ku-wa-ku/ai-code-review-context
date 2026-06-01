@@ -1,1 +1,17 @@
-"""解析层占位包，后续阶段用于 Python AST 解析。"""
+"""Python AST 解析能力。"""
+
+from repo_context.parser.ast_parser import (
+    CodeNode,
+    ImportInfo,
+    ParseError,
+    ParseResult,
+    parse_python_file,
+)
+
+__all__ = [
+    "CodeNode",
+    "ImportInfo",
+    "ParseError",
+    "ParseResult",
+    "parse_python_file",
+]
