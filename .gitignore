@@ -1,0 +1,18 @@
+.venv/
+.demo_data/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Local agent/tooling state
+.agents/
+.claude/
+.codegraph/
+.mcp.json
+skills-lock.json
+
+# External repositories used only as local fixtures
+tests/fixtures/fastapi-sqlalchemy-starter-main/
+
+# Development planning notes and prompts
+dev_docs/
