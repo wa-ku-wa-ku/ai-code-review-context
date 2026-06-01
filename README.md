@@ -93,6 +93,69 @@ D:\demo_repos\my_python_repo
 
 当前 demo 读取的是服务端本机路径，不是浏览器上传文件。
 
+## 仓库输入方式
+
+当前模块支持两类输入：本地仓库目录和 zip 包。无论哪种方式，最终都会得到一个服务端本机可访问的仓库目录，再调用 `build_index()` 构建 SQLite 上下文索引。
+
+### 方式一：本地仓库目录
+
+如果待评审仓库已经在服务端本机，例如：
+
+```text
+D:\demo_repos\my_python_repo
+```
+
+可以直接构建索引：
+
+```python
+from repo_context.index.index_builder import build_index
+
+build_index(
+    repo_id="my-repo",
+    repo_path=r"D:\demo_repos\my_python_repo",
+    db_path=r"D:\demo_output\context.db",
+)
+```
+
+### 方式二：zip 包
+
+如果用户提供的是 zip 包，可以先安全解压，再构建索引：
+
+```python
+from repo_context.ingest.zip_loader import extract_zip
+from repo_context.index.index_builder import build_index
+
+repo_dir = extract_zip(
+    zip_path=r"D:\uploads\my_python_repo.zip",
+    output_dir=r"D:\workspaces\my_python_repo",
+)
+
+build_index(
+    repo_id="my-repo",
+    repo_path=repo_dir,
+    db_path=r"D:\demo_output\context.db",
+)
+```
+
+zip 解压会检查路径穿越，例如 `../../evil.py` 会被拒绝，避免文件写出目标目录。
+
+### 扫描规则
+
+文件扫描阶段会跳过常见缓存、依赖和构建目录，例如：
+
+```text
+.git
+.venv
+venv
+__pycache__
+dist
+build
+site-packages
+node_modules
+```
+
+AST 解析失败不会中断整个仓库处理。语法错误文件会保留文件记录，但不会生成符号节点，其他正常文件会继续入库。
+
 ## 快速开始
 
 使用项目自带的 sample repo 构建索引：

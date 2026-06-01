@@ -10,3 +10,6 @@ __pycache__/
 .codegraph/
 .mcp.json
 skills-lock.json
+
+# External repositories used only as local fixtures
+tests/fixtures/fastapi-sqlalchemy-starter-main/
