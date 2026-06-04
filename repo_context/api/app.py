@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from repo_context.index.index_builder import build_index
 from repo_context.service.context_service import ContextService
@@ -14,6 +15,7 @@ from repo_context.task.review_task_generator import ReviewTaskGenerator
 app = FastAPI(title="AI Code Review Context")
 
 _DEMO_SESSIONS: dict[str, dict[str, Any]] = {}
+_TASK_FEEDBACKS: dict[str, dict[str, Any]] = {}
 
 
 @app.get("/health")
@@ -42,6 +44,20 @@ class ContextSessionRequest(BaseModel):
     repo_id: str
     repo_path: str
     db_path: str | None = None
+
+
+class TaskFeedbackRequest(BaseModel):
+    repo_id: str
+    task_id: str
+    agent: str
+    status: str
+    context_sufficient: bool
+    feedback_type: str
+    message: str | None = None
+    need_more_context: bool = False
+    requested_context: list[dict[str, Any]] = Field(default_factory=list)
+    downstream_result_ref: str | None = None
+    created_at: str | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -213,6 +229,31 @@ def context_task_graph_slice(
 ) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
     return service["context_service"].get_task_graph_slice(task_id=task_id, depth=depth)
+
+
+@app.post("/context/task-feedback")
+def context_task_feedback(request: TaskFeedbackRequest) -> dict[str, Any]:
+    """接收下游 agent 的任务状态和上下文需求反馈，不保存最终漏洞结论。"""
+    _load_demo_services(request.repo_id)
+    feedback_id = f"feedback_{len(_TASK_FEEDBACKS) + 1:06d}"
+    created_at = request.created_at or datetime.now(timezone.utc).isoformat()
+    record = {
+        **request.model_dump(),
+        "feedback_id": feedback_id,
+        "created_at": created_at,
+    }
+    _TASK_FEEDBACKS[feedback_id] = record
+    next_action = "provide_more_context" if request.need_more_context else "continue_downstream"
+    return {
+        "accepted": True,
+        "feedback_id": feedback_id,
+        "repo_id": request.repo_id,
+        "task_id": request.task_id,
+        "status": request.status,
+        "context_sufficient": request.context_sufficient,
+        "next_action": next_action,
+        "message": "feedback received",
+    }
 
 
 @app.get("/demo/{repo_id}/summary")

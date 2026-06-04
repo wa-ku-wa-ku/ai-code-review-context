@@ -79,9 +79,16 @@ http://127.0.0.1:8000/
 
 ```text
 http://127.0.0.1:8000/docs
+http://127.0.0.1:8000/openapi.json
 ```
 
-7. 停止服务：
+7. 使用 Postman：
+
+- 可直接导入 `docs/api/postman_collection.json`。
+- 也可以在服务启动后导入 `http://127.0.0.1:8000/openapi.json`。
+- 详细说明见 `docs/api/README.md`。
+
+8. 停止服务：
 
 在启动服务的终端按 `Ctrl+C`。
 

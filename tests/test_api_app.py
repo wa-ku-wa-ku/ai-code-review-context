@@ -167,6 +167,51 @@ def test_context_api_related_context_and_task_package_are_local(tmp_path: Path) 
     )
 
 
+def test_context_api_task_feedback_accepts_completed_and_blocked(tmp_path: Path) -> None:
+    client = _indexed_client(tmp_path, "api-context-feedback")
+    completed = client.post(
+        "/context/task-feedback",
+        json={
+            "repo_id": "api-context-feedback",
+            "task_id": "task_route_post_login",
+            "agent": "security-review-agent",
+            "status": "completed",
+            "context_sufficient": True,
+            "feedback_type": "task_status",
+            "message": "task completed",
+            "need_more_context": False,
+            "requested_context": [],
+            "downstream_result_ref": "review-result-0001",
+        },
+    )
+    blocked = client.post(
+        "/context/task-feedback",
+        json={
+            "repo_id": "api-context-feedback",
+            "task_id": "task_route_post_login",
+            "agent": "security-review-agent",
+            "status": "blocked",
+            "context_sufficient": False,
+            "feedback_type": "context_request",
+            "message": "need caller context",
+            "need_more_context": True,
+            "requested_context": [
+                {"type": "callers", "symbol_name": "authenticate", "depth": 2}
+            ],
+            "downstream_result_ref": None,
+        },
+    )
+    openapi = client.get("/openapi.json").json()
+
+    assert completed.status_code == 200
+    assert completed.json()["accepted"] is True
+    assert completed.json()["next_action"] == "continue_downstream"
+    assert blocked.status_code == 200
+    assert blocked.json()["accepted"] is True
+    assert blocked.json()["next_action"] == "provide_more_context"
+    assert "/context/task-feedback" in openapi["paths"]
+
+
 def _indexed_client(tmp_path: Path, repo_id: str) -> TestClient:
     client = TestClient(app)
     response = client.post(
