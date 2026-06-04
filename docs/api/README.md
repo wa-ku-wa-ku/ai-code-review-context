@@ -8,6 +8,7 @@
 | --- | --- |
 | `openapi.json` | FastAPI `app.openapi()` 导出的 OpenAPI 规范，可用于 Swagger、Postman、Apifox 等工具 |
 | `postman_collection.json` | 下游 Agent 接入流程的 Postman Collection，已按调用顺序分组 |
+| `../test-case-parameter-guide.md` | 测试用例和接口联调参数填写指南，说明 `repo_id`、`task_id`、`file_path`、`symbol_name` 等值应该从哪里来 |
 
 ## 启动后端
 
@@ -55,3 +56,18 @@ POST /context/task-feedback
 ```
 
 下游 Agent 应优先使用 `task-package` 和 `graph-slice` 判断阅读路径，再按需调用源码和符号工具。任务完成、阻塞或上下文不足时，通过 `task-feedback` 反馈状态和上下文需求。
+
+## 不知道参数怎么填时
+
+先看 `docs/test-case-parameter-guide.md`。最小可跑通组合如下：
+
+| 参数 | 示例值 |
+| --- | --- |
+| `repo_id` | `sample-repo` |
+| `repo_path` | `tests/fixtures/sample_repo` |
+| `db_path` | `.demo_data/sample-repo.db` |
+| `task_id` | `task_route_post_login` |
+| `file_path` / `target_file` | `app/api/auth.py` |
+| `symbol_name` | `login` |
+| `review_dimension` | `security` |
+| `depth` | `1` 或 `2` |
