@@ -26,7 +26,7 @@ def test_expected_package_directories_exist() -> None:
     ]
 
     for dirname in expected_dirs:
-        package_dir = ROOT / "repo_context" / dirname
+        package_dir = ROOT / "context" / "repo_context" / dirname
         assert package_dir.is_dir()
         assert (package_dir / "__init__.py").is_file()
 

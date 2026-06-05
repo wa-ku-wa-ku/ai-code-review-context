@@ -9,6 +9,7 @@
 | `openapi.json` | FastAPI `app.openapi()` 导出的 OpenAPI 规范，可用于 Swagger、Postman、Apifox 等工具 |
 | `postman_collection.json` | 下游 Agent 接入流程的 Postman Collection，已按调用顺序分组 |
 | `../test-case-parameter-guide.md` | 测试用例和接口联调参数填写指南，说明 `repo_id`、`task_id`、`file_path`、`symbol_name` 等值应该从哪里来 |
+| `../interface-test-cases.md` | 每个接口的多组请求参数、预期状态码和关键返回数据 |
 
 ## 启动后端
 
