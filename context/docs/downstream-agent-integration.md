@@ -2,7 +2,7 @@
 
 本文面向接入本模块的下游 review agent / 工程服务。目标是说明：如何构建仓库上下文索引、如何领取任务包、如何按需查询上下文、如何记录上下文使用情况，以及如何回传评审过程中的状态。
 
-接口参数和返回字段详见 `docs/context-api-reference.md`。Postman 导入文件见 `docs/api/postman_collection.json`。
+接口参数和返回字段详见 `context/docs/context-api-reference.md`。Postman 导入文件见 `context/docs/api/postman_collection.json`。
 
 ## 接入流程
 

@@ -4,9 +4,9 @@
 
 配套产物：
 
-- `docs/api/openapi.json`：从真实 FastAPI 应用导出的 OpenAPI 规范。
-- `docs/api/postman_collection.json`：可直接导入 Postman 的请求集合。
-- `docs/api/README.md`：Postman 变量和调用顺序说明。
+- `context/docs/api/openapi.json`：从真实 FastAPI 应用导出的 OpenAPI 规范。
+- `context/docs/api/postman_collection.json`：可直接导入 Postman 的请求集合。
+- `context/docs/api/README.md`：Postman 变量和调用顺序说明。
 
 ## 标准调用流程
 

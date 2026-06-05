@@ -16,6 +16,7 @@
 在仓库根目录运行：
 
 ```bash
+$env:PYTHONPATH = "context"
 python -m uvicorn repo_context.api.app:app --reload --port 8000
 ```
 
@@ -30,7 +31,7 @@ http://127.0.0.1:8000/openapi.json
 
 1. 打开 Postman。
 2. 点击 `Import`。
-3. 选择 `docs/api/postman_collection.json`，或直接导入 `http://127.0.0.1:8000/openapi.json`。
+3. 选择 `context/docs/api/postman_collection.json`，或直接导入 `http://127.0.0.1:8000/openapi.json`。
 4. 确认 collection 变量：
 
 | 变量 | 默认值 | 说明 |
@@ -60,7 +61,7 @@ POST /context/task-feedback
 
 ## 不知道参数怎么填时
 
-先看 `docs/test-case-parameter-guide.md`。最小可跑通组合如下：
+先看 `context/docs/test-case-parameter-guide.md`。最小可跑通组合如下：
 
 | 参数 | 示例值 |
 | --- | --- |
