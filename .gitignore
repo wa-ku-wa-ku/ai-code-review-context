@@ -16,3 +16,6 @@ tests/fixtures/fastapi-sqlalchemy-starter-main/
 
 # Development planning notes and prompts
 dev_docs/
+
+# Word temporary lock files
+~$*.docx

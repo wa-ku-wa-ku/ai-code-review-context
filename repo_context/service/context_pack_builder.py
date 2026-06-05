@@ -7,6 +7,7 @@ from repo_context.service.context_service import ContextService
 AVAILABLE_CONTEXT_TOOLS = [
     "get_file_snippet",
     "get_node_detail",
+    "get_task_graph_slice",
     "get_callers",
     "get_callees",
     "trace_call_chain",
@@ -19,6 +20,10 @@ DEFAULT_CONTEXT_POLICY = {
     "max_snippet_lines": 120,
     "max_files": 5,
     "allow_expand": True,
+    "allow_task_graph_slice": True,
+    "allow_full_graph": False,
+    "prefer_graph_slice_first": True,
+    "max_graph_depth": 2,
 }
 
 SECURITY_KEYWORDS = {
@@ -61,39 +66,31 @@ class ContextPackBuilder:
         symbols = target.get("symbols", []) if isinstance(target, dict) else []
         dimension = task.get("review_dimension")
         policy = self.build_context_policy(task)
-        graph = self.build_task_local_graph(task, depth=min(policy["max_depth"], 2))
-        center_nodes = self._center_nodes(target_file, symbols)
-
-        file_snippets = []
-        if target_file:
-            file_snippets.append(
-                self._safe_snippet(
-                    target_file,
-                    1,
-                    min(policy["max_snippet_lines"], 80),
-                )
-            )
-
-        related_symbols = []
-        for node in center_nodes[:8]:
-            detail = self.context_service.get_node_detail(
-                node["node_id"],
-                task_id=task.get("task_id"),
-                review_dimension=dimension,
-                record_usage=False,
-            )
-            if detail is not None:
-                related_symbols.append(detail)
-
-        related_symbols.extend(self._dimension_related_symbols(task, limit=8))
-        related_symbols = _dedupe_by(related_symbols, "node_id")[:12]
-        requirement_refs = self._requirement_refs(task)
-
         return {
-            "file_snippets": [item for item in file_snippets if item],
-            "related_symbols": related_symbols,
-            "call_graph_slice": graph,
-            "requirement_refs": requirement_refs,
+            "type": "task_entry",
+            "target": target,
+            "file_path": target_file,
+            "symbols": symbols,
+            "review_dimension": dimension,
+            "focus_points": list(task.get("focus_points") or task.get("review_focus") or []),
+            "reason": task.get("reason"),
+            "priority": task.get("priority"),
+            "suggested_next_tool": "get_task_graph_slice",
+            "suggested_next_params": {
+                "task_id": task.get("task_id"),
+                "depth": policy["max_graph_depth"],
+            },
+            "context_scope": {
+                "task_local": True,
+                "allow_full_graph": policy["allow_full_graph"],
+                "prefer_graph_slice_first": policy["prefer_graph_slice_first"],
+            },
+            "tool_guidance": [
+                "Call get_task_graph_slice first for the task-local structure.",
+                "Use get_node_detail or get_file_snippet for precise source code.",
+                "Use get_related_context when more surrounding context is needed.",
+                "Use get_callers/get_callees for focused follow-up traversal.",
+            ],
         }
 
     def build_task_local_graph(self, task: dict[str, Any], depth: int = 1) -> dict[str, Any]:
@@ -115,11 +112,14 @@ class ContextPackBuilder:
         if dimension == "coding_style":
             policy["max_depth"] = 1
             policy["max_snippet_lines"] = 160
+            policy["max_graph_depth"] = 1
         elif dimension == "security":
             policy["max_depth"] = 2
             policy["max_files"] = 6
+            policy["max_graph_depth"] = 2
         elif dimension == "function_logic":
             policy["max_depth"] = 2
+            policy["max_graph_depth"] = 2
         return policy
 
     def _center_nodes(

@@ -128,32 +128,88 @@ def test_context_api_related_context_and_task_package_are_local(tmp_path: Path) 
             "max_files": 2,
         },
     )
-    coverage = client.get("/demo/api-context-package/coverage").json()["usage_coverage_report"]
-
     assert full_package_response.status_code == 200
     full_package = full_package_response.json()
     assert full_package["initial_context"]
     assert full_package["available_tools"]
     assert full_package["context_policy"]["allow_expand"] is True
-    assert full_package["initial_context"]["call_graph_slice"]["graph_scope"] == "local"
-    assert len(full_package["initial_context"]["call_graph_slice"]["edges"]) <= len(
-        task_package["initial_context"]["call_graph_slice"]["edges"]
+    assert full_package["initial_context"]["type"] == "task_entry"
+    assert full_package["initial_context"]["suggested_next_tool"] == "get_task_graph_slice"
+    assert "call_graph_slice" not in full_package["initial_context"]
+    graph_response = client.get(
+        "/context/tasks/task_route_post_login/graph-slice",
+        params={"repo_id": "api-context-package", "depth": 1},
     )
+    assert graph_response.status_code == 200
+    task_graph = graph_response.json()
+    assert task_graph["graph_scope"] == "task-local"
+    assert task_graph["nodes"]
+    assert "call_graph_slice" not in task_package["initial_context"]
+    assert len(task_graph["nodes"]) < 20
 
     assert related_response.status_code == 200
     related = related_response.json()
+    coverage = client.get("/demo/api-context-package/coverage").json()["usage_coverage_report"]
     assert related["snippets"]
     assert related["related_symbols"]
     assert related["call_graph_slice"]["graph_scope"] == "local"
     assert len(related["related_files"]) <= 2
-    assert len(related["call_graph_slice"]["nodes"]) <= len(
-        full_package["initial_context"]["call_graph_slice"]["nodes"]
-    )
+    assert len(related["call_graph_slice"]["nodes"]) <= len(task_graph["nodes"])
     assert any(
         item["tool_name"] == "get_related_context"
         and item["target_type"] == "batch_context"
         for item in coverage["usage_records"]
     )
+    assert any(
+        item["tool_name"] == "get_task_graph_slice"
+        and item["target_type"] == "graph_slice"
+        for item in coverage["usage_records"]
+    )
+
+
+def test_context_api_task_feedback_accepts_completed_and_blocked(tmp_path: Path) -> None:
+    client = _indexed_client(tmp_path, "api-context-feedback")
+    completed = client.post(
+        "/context/task-feedback",
+        json={
+            "repo_id": "api-context-feedback",
+            "task_id": "task_route_post_login",
+            "agent": "security-review-agent",
+            "status": "completed",
+            "context_sufficient": True,
+            "feedback_type": "task_status",
+            "message": "task completed",
+            "need_more_context": False,
+            "requested_context": [],
+            "downstream_result_ref": "review-result-0001",
+        },
+    )
+    blocked = client.post(
+        "/context/task-feedback",
+        json={
+            "repo_id": "api-context-feedback",
+            "task_id": "task_route_post_login",
+            "agent": "security-review-agent",
+            "status": "blocked",
+            "context_sufficient": False,
+            "feedback_type": "context_request",
+            "message": "need caller context",
+            "need_more_context": True,
+            "requested_context": [
+                {"type": "callers", "symbol_name": "authenticate", "depth": 2}
+            ],
+            "downstream_result_ref": None,
+        },
+    )
+    openapi = client.get("/openapi.json").json()
+
+    assert completed.status_code == 200
+    assert completed.json()["accepted"] is True
+    assert completed.json()["next_action"] == "continue_downstream"
+    assert blocked.status_code == 200
+    assert blocked.json()["accepted"] is True
+    assert blocked.json()["next_action"] == "provide_more_context"
+    assert "/context/task-feedback" in openapi["paths"]
 
 
 def _indexed_client(tmp_path: Path, repo_id: str) -> TestClient:
