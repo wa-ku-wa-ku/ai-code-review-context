@@ -9,14 +9,23 @@
 推荐流程：
 
 1. 调用 `/context/index` 为目标仓库构建索引。
-2. 从返回值中读取 `review_tasks`。
-3. 下游 agent 按任务逐个处理，不要一次性读取完整仓库源码。
-4. 对每个任务，调用 `/context/task-package/{task_id}` 获取完整任务包。
-5. 先消费轻量 `initial_context`，确认目标、关注点和 `suggested_next_tool`。
-6. 优先调用 `/context/tasks/{task_id}/graph-slice` 获取 task-local graph slice。
-7. 如果上下文不足，再调用 `available_tools` 对应接口扩展上下文。
-8. 每次上下文查询会自动写入 `context_usage`。
-9. 处理完成后，下游系统可读取 `/demo/{repo_id}/coverage` 查看实际覆盖率。
+2. 下游 agent 根据自己的评审维度查询任务：`GET /context/tasks?repo_id=sample-repo&review_dimension=security`。
+3. agent 从返回结果的 `tasks[].task_id` 中读取任务 ID。
+4. agent 调用 `/context/task-package/{task_id}` 获取完整任务包。
+5. agent 根据任务包中的 `initial_context`、`suggested_next_tool`、`available_tools` 调用上下文工具。
+6. 每次上下文查询会自动写入 `context_usage`。
+7. agent 调用 `/context/task-feedback` 反馈任务状态和上下文需求。
+
+注意：上下文服务启动后不会自动生成任务包。必须先等待 `/context/index` 构建索引成功，再通过 `/context/tasks` 按 `review_dimension` 领取任务。
+
+固定评审维度枚举：
+
+| review_dimension | 说明 |
+| --- | --- |
+| `security` | 安全评审任务 |
+| `function_logic` | 功能逻辑评审任务 |
+| `coding_style` | 代码风格和可维护性任务 |
+| `requirement_consistency` | 需求一致性任务，当前主要作为预留维度 |
 
 ## 1. 构建索引
 
@@ -33,6 +42,26 @@ Content-Type: application/json
 }
 ```
 
+PowerShell 示例：
+
+```powershell
+$body = @{
+  repo_id = "sample-repo"
+  repo_path = "tests/fixtures/sample_repo"
+  db_path = ".demo_data/sample-repo.db"
+} | ConvertTo-Json
+
+$response = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/index" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+
+$response.review_tasks | Select-Object task_id, task_type, priority
+```
+
+`repo_id = "sample-repo"` 可以换成你自己的仓库分析 ID，例如 `"payment-service"`；`repo_path = "tests/fixtures/sample_repo"` 可以换成服务端本机可访问的真实 Python 仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
+
 字段说明：
 
 - `repo_id`：本次仓库分析的唯一标识。
@@ -46,9 +75,17 @@ Content-Type: application/json
 - `task_coverage_report`：任务生成阶段的规划覆盖率。
 - `usage_coverage_report`：实际上下文读取覆盖率。
 
-## 2. 领取任务
+## 2. 按评审维度查询任务
 
-索引完成后，从 `review_tasks` 中读取任务。每个任务都包含：
+索引完成后，下游 agent 应根据自己的评审维度调用 `/context/tasks` 查询任务。构建索引成功前，任务包接口没有可领取的任务。
+
+请求：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=security
+```
+
+返回中的 `tasks` 是该维度下的任务列表，每个任务都包含：
 
 ```json
 {
@@ -82,6 +119,7 @@ Content-Type: application/json
 - 同一个任务只分配给一个 review agent。
 - 不要把所有任务同时强行分配给所有 agent。
 - 不要绕过任务包直接读取完整仓库源码。
+- `review_dimension` 必须使用固定枚举值，不要自造维度名。
 
 ## 3. 获取完整任务包
 
@@ -95,6 +133,16 @@ GET /context/task-package/{task_id}?repo_id=sample-repo
 
 ```http
 GET /context/task-package/task_route_post_login?repo_id=sample-repo
+```
+
+命令行示例：
+
+```powershell
+$taskId = $response.review_tasks[0].task_id
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/task-package/$taskId?repo_id=sample-repo" `
+  -Method Get
 ```
 
 返回重点字段：

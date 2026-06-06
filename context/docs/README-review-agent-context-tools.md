@@ -19,6 +19,7 @@
 
 | 接入等级 | 接口 | 下游动作 | 作用 |
 | --- | --- | --- | --- |
+| **必须调用** | `GET /context/tasks?repo_id={repo_id}&review_dimension={review_dimension}` | agent 按自己的评审维度查询任务 | 获取该维度下可领取的任务列表 |
 | **必须调用** | `GET /context/task-package/{task_id}` | 每个评审任务开始前调用 | 获取任务目标、初始上下文、可用工具和上下文限制 |
 | **必须调用** | `POST /context/task-feedback` | 每个评审任务完成、阻塞或跳过时调用 | 反馈任务状态、上下文是否足够、是否需要补充上下文 |
 | **必须优先支持** | `GET /context/tasks/{task_id}/graph-slice` | 阅读任务包后优先调用 | 获取 task-local graph slice 总览，不暴露完整仓库图 |
@@ -35,6 +36,8 @@
 | `POST /context/index` | 工程服务 / 调度服务 | 为目标仓库构建索引并生成 `review_tasks` |
 | `GET /demo/{repo_id}/coverage` | 工程服务 / 验收方 | 查看实际上下文读取覆盖率 |
 
+固定 `review_dimension` 枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency`。下游 agent 必须使用这些值，不要自造维度名。
+
 ---
 
 ## 2. 下游 Agent 标准调用流程
@@ -42,20 +45,22 @@
 该流程用于约束下游 agent 如何使用上下文工具。它不是新的接口，而是建议下游 agent 按这个顺序编写调用逻辑。
 
 ```text
-1. 工程服务调用 /context/index 构建仓库索引，得到 review_tasks
-2. 调度器把单个 task 分配给对应 review agent
-3. agent 调用 /context/task-package/{task_id} 获取任务包
-4. agent 优先阅读轻量 initial_context，确认目标、关注点和 suggested_next_tool
-5. agent 调用 /context/tasks/{task_id}/graph-slice 获取任务局部图总览
-6. agent 根据局部图选择重点节点
-7. 上下文不足时，调用 /context/related-context 补充源码片段和相关符号
-8. 需要精确信息时，再调用 file-snippet / node-detail / callers / callees
+1. 工程服务调用 /context/index 构建仓库索引，生成 review_tasks
+2. agent 根据自己的 review_dimension 调用 /context/tasks 查询任务
+3. agent 从 tasks[].task_id 中读取任务 ID
+4. agent 调用 /context/task-package/{task_id} 获取任务包
+5. agent 优先阅读轻量 initial_context，确认目标、关注点和 suggested_next_tool
+6. agent 调用 /context/tasks/{task_id}/graph-slice 获取任务局部图总览
+7. agent 根据局部图选择重点节点
+8. 上下文不足时，调用 /context/related-context 补充源码片段和相关符号
 9. 任务完成、阻塞或跳过时，调用 /context/task-feedback 反馈状态
 ```
 
 推荐顺序：
 
 ```text
+/context/tasks?repo_id={repo_id}&review_dimension={review_dimension}
+        ↓
 task_package.initial_context
         ↓
 /context/tasks/{task_id}/graph-slice
@@ -86,6 +91,12 @@ task_package.initial_context
 ```
 
 下游 agent 应该先调用任务包接口：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=security
+```
+
+从返回的 `tasks[].task_id` 中读取任务 ID 后，再调用任务包接口：
 
 ```http
 GET /context/task-package/task_route_post_login?repo_id=sample-repo
@@ -171,7 +182,7 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 | --- | --- | --- |
 | `task_id` | string | 任务 ID |
 | `task_type` | string | 任务类型，例如 `entrypoint_review` |
-| `review_dimension` | string | 评审维度，例如 `security` |
+| `review_dimension` | enum | 固定评审维度，例如 `security` |
 | `priority` | string | 任务优先级 |
 | `target` | object | 任务目标文件和目标符号 |
 | `focus_points` | array | 建议关注点 |
@@ -294,7 +305,7 @@ GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
 | `repo_id` | Body | string | 是 | 仓库 ID |
 | `task_id` | Body | string | 是 | 当前评审任务 ID |
 | `target_file` | Body | string | 是 | 当前任务目标文件 |
-| `review_dimension` | Body | string | 是 | 当前评审维度 |
+| `review_dimension` | Body | enum | 是 | 当前评审维度，固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 | `tags` | Body | array | 否 | 任务标签，例如 `api_entry`、`auth` |
 | `max_depth` | Body | integer | 否 | 调用关系扩展深度 |
 | `max_files` | Body | integer | 否 | 最多返回文件数 |
@@ -376,7 +387,7 @@ Content-Type: application/json
 | `start_line` | Query | integer | 是 | 起始行号 |
 | `end_line` | Query | integer | 是 | 结束行号 |
 | `task_id` | Query | string | 建议必填 | 当前任务 ID，用于 usage 记录 |
-| `review_dimension` | Query | string | 建议必填 | 当前评审维度，用于 usage 记录 |
+| `review_dimension` | Query | enum | 建议必填 | 当前评审维度，用于 usage 记录，固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 
 ### 请求示例
 
@@ -419,7 +430,7 @@ GET /context/file-snippet?repo_id=sample-repo&file_path=app/api/auth.py&start_li
 | `repo_id` | Query | string | 是 | 仓库 ID |
 | `symbol_name` | Query | string | 是 | 符号名称，例如 `login` |
 | `task_id` | Query | string | 建议必填 | 当前任务 ID，用于 usage 记录 |
-| `review_dimension` | Query | string | 建议必填 | 当前评审维度，用于 usage 记录 |
+| `review_dimension` | Query | enum | 建议必填 | 当前评审维度，用于 usage 记录，固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 
 ### 请求示例
 
@@ -473,7 +484,7 @@ GET /context/node-detail?repo_id=sample-repo&symbol_name=login&task_id=task_rout
 | `symbol_name` | Query | string | 是 | 符号名称 |
 | `depth` | Query | integer | 否 | 调用关系深度，建议默认 `1` |
 | `task_id` | Query | string | 建议必填 | 当前任务 ID，用于 usage 记录 |
-| `review_dimension` | Query | string | 建议必填 | 当前评审维度，用于 usage 记录 |
+| `review_dimension` | Query | enum | 建议必填 | 当前评审维度，用于 usage 记录，固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 
 ### 请求示例
 
@@ -630,7 +641,7 @@ Content-Type: application/json
 | 参数 | 下游为什么要带 |
 | --- | --- |
 | `task_id` | 用于判断某个任务实际读取过哪些上下文 |
-| `review_dimension` | 用于区分安全、性能、可维护性等不同评审维度 |
+| `review_dimension` | 用于区分固定评审维度：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 
 说明：
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,13 @@ _DEMO_SESSIONS: dict[str, dict[str, Any]] = {}
 _TASK_FEEDBACKS: dict[str, dict[str, Any]] = {}
 
 
+class ReviewDimension(str, Enum):
+    security = "security"
+    function_logic = "function_logic"
+    coding_style = "coding_style"
+    requirement_consistency = "requirement_consistency"
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """最小健康检查接口，用于验证阶段 0 API 骨架可启动。"""
@@ -34,7 +42,7 @@ class RelatedContextRequest(BaseModel):
     repo_id: str | None = None
     task_id: str | None = None
     target_file: str | None = None
-    review_dimension: str | None = None
+    review_dimension: ReviewDimension | None = None
     tags: list[str] = []
     max_depth: int = 2
     max_files: int = 5
@@ -112,7 +120,7 @@ def context_file_snippet(
     start_line: int | None = None,
     end_line: int | None = None,
     task_id: str | None = None,
-    review_dimension: str | None = None,
+    review_dimension: ReviewDimension | None = None,
 ) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
     try:
@@ -121,7 +129,7 @@ def context_file_snippet(
             start_line=start_line,
             end_line=end_line,
             task_id=task_id,
-            review_dimension=review_dimension,
+            review_dimension=_dimension_value(review_dimension),
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -133,7 +141,7 @@ def context_node_detail(
     node_id: str | None = None,
     symbol_name: str | None = None,
     task_id: str | None = None,
-    review_dimension: str | None = None,
+    review_dimension: ReviewDimension | None = None,
 ) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
     detail = service["context_service"].get_node_detail(
@@ -141,7 +149,7 @@ def context_node_detail(
         symbol_name=symbol_name,
         include_source=True,
         task_id=task_id,
-        review_dimension=review_dimension,
+        review_dimension=_dimension_value(review_dimension),
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="node not found")
@@ -155,7 +163,7 @@ def context_callees(
     symbol_name: str | None = None,
     depth: int = 1,
     task_id: str | None = None,
-    review_dimension: str | None = None,
+    review_dimension: ReviewDimension | None = None,
 ) -> list[dict[str, Any]]:
     service = _load_demo_services(repo_id)
     return service["context_service"].get_callees(
@@ -163,7 +171,7 @@ def context_callees(
         symbol_name=symbol_name,
         depth=depth,
         task_id=task_id,
-        review_dimension=review_dimension,
+        review_dimension=_dimension_value(review_dimension),
     )
 
 
@@ -174,7 +182,7 @@ def context_callers(
     symbol_name: str | None = None,
     depth: int = 1,
     task_id: str | None = None,
-    review_dimension: str | None = None,
+    review_dimension: ReviewDimension | None = None,
 ) -> list[dict[str, Any]]:
     service = _load_demo_services(repo_id)
     return service["context_service"].get_callers(
@@ -182,7 +190,7 @@ def context_callers(
         symbol_name=symbol_name,
         depth=depth,
         task_id=task_id,
-        review_dimension=review_dimension,
+        review_dimension=_dimension_value(review_dimension),
     )
 
 
@@ -192,6 +200,7 @@ def context_related_context(request: RelatedContextRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="repo_id is required")
     service = _load_demo_services(request.repo_id)
     task = request.model_dump(exclude={"repo_id"})
+    task["review_dimension"] = _dimension_value(request.review_dimension)
     if request.target_file:
         task["target"] = {
             "type": "file",
@@ -203,7 +212,7 @@ def context_related_context(request: RelatedContextRequest) -> dict[str, Any]:
             task,
             task_id=request.task_id,
             target_file=request.target_file,
-            review_dimension=request.review_dimension,
+            review_dimension=_dimension_value(request.review_dimension),
             tags=request.tags,
             max_depth=request.max_depth,
             max_files=request.max_files,
@@ -219,6 +228,26 @@ def context_task_package(repo_id: str, task_id: str) -> dict[str, Any]:
     if package is None:
         raise HTTPException(status_code=404, detail="task not found")
     return package
+
+
+@app.get("/context/tasks")
+def context_tasks(repo_id: str, review_dimension: ReviewDimension) -> dict[str, Any]:
+    service = _load_demo_services(repo_id)
+    plan = service["task_generator"].generate()
+    tasks = [
+        task.to_dict()
+        for task in plan.review_tasks
+        if task.review_dimension == review_dimension.value
+    ]
+    return {
+        "repo_id": repo_id,
+        "review_dimension": review_dimension.value,
+        "tasks": tasks,
+    }
+
+
+def _dimension_value(review_dimension: ReviewDimension | None) -> str | None:
+    return review_dimension.value if review_dimension is not None else None
 
 
 @app.get("/context/tasks/{task_id}/graph-slice")

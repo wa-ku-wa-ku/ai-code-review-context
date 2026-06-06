@@ -204,7 +204,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ReviewDimension"
                 },
                 {
                   "type": "null"
@@ -309,7 +309,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ReviewDimension"
                 },
                 {
                   "type": "null"
@@ -424,7 +424,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ReviewDimension"
                 },
                 {
                   "type": "null"
@@ -542,7 +542,7 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ReviewDimension"
                 },
                 {
                   "type": "null"
@@ -654,6 +654,55 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Context Task Package Context Task Package  Task Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/context/tasks": {
+      "get": {
+        "summary": "Context Tasks",
+        "operationId": "context_tasks_context_tasks_get",
+        "parameters": [
+          {
+            "name": "repo_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo Id"
+            }
+          },
+          {
+            "name": "review_dimension",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ReviewDimension"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Context Tasks Context Tasks Get"
                 }
               }
             }
@@ -1466,13 +1515,12 @@
           "review_dimension": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ReviewDimension"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Review Dimension"
+            ]
           },
           "tags": {
             "items": {
@@ -1495,6 +1543,16 @@
         },
         "type": "object",
         "title": "RelatedContextRequest"
+      },
+      "ReviewDimension": {
+        "type": "string",
+        "enum": [
+          "security",
+          "function_logic",
+          "coding_style",
+          "requirement_consistency"
+        ],
+        "title": "ReviewDimension"
       },
       "TaskFeedbackRequest": {
         "properties": {

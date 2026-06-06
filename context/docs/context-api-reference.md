@@ -12,6 +12,7 @@
 
 ```text
 POST /context/index
+GET  /context/tasks?repo_id={repo_id}&review_dimension={review_dimension}
 GET  /context/task-package/{task_id}
 GET  /context/tasks/{task_id}/graph-slice
 POST /context/related-context
@@ -22,11 +23,22 @@ GET  /context/callers
 POST /context/task-feedback
 ```
 
-下游 Agent 应先通过任务包确认目标和策略，再通过 task-local graph slice 判断阅读路径；需要源码时再按需调用上下文工具。任务完成、阻塞或上下文不足时，通过 `task-feedback` 反馈状态。
+`POST /context/index` 是前置步骤。服务启动后还没有任务包，必须先构建索引生成 `review_tasks`。下游 Agent 再按自己的 `review_dimension` 调用 `GET /context/tasks` 查询任务列表，从 `tasks[].task_id` 中读取任务 ID。之后通过任务包确认目标和策略，再通过 task-local graph slice 判断阅读路径；需要源码时再按需调用上下文工具。任务完成、阻塞或上下文不足时，通过 `task-feedback` 反馈状态。
+
+固定评审维度枚举：
+
+| review_dimension | 说明 |
+| --- | --- |
+| `security` | 安全评审任务 |
+| `function_logic` | 功能逻辑评审任务 |
+| `coding_style` | 代码风格和可维护性任务 |
+| `requirement_consistency` | 需求一致性任务，当前主要作为预留维度 |
 
 ## 1. POST /context/index
 
 作用：构建仓库上下文索引，生成仓库摘要、评审任务和初始覆盖率。
+
+该接口必须先成功执行，后续 `GET /context/tasks` 才能按维度查询可领取任务。
 
 参数：
 
@@ -50,9 +62,34 @@ POST /context/index
 }
 ```
 
+`repo_id = "sample-repo"` 可以换成你自己的仓库分析 ID，例如 `"payment-service"`；`repo_path = "tests/fixtures/sample_repo"` 可以换成服务端本机可访问的真实 Python 仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
+
 返回重点：`repo_summary`、`review_tasks`、`task_coverage_report`、`usage_coverage_report`。
 
-## 2. GET /context/task-package/{task_id}
+## 2. GET /context/tasks
+
+作用：按固定评审维度查询任务列表，供对应下游 agent 领取任务。
+
+参数：
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- | --- |
+| `repo_id` | Query | string | 是 | 仓库 ID |
+| `review_dimension` | Query | enum | 是 | 固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
+
+示例：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=security
+```
+
+返回重点：
+
+- `tasks[]`：该维度下可处理的任务列表。
+- `tasks[].task_id`：后续调用任务包接口需要使用的任务 ID。
+- `tasks[].review_dimension`：一定等于请求中的 `review_dimension`。
+
+## 3. GET /context/task-package/{task_id}
 
 作用：获取单个任务包，包括目标、轻量 `initial_context`、可用工具和上下文策略。
 
@@ -77,7 +114,7 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 - `available_tools`：允许继续调用的上下文工具。
 - `context_policy`：上下文扩展限制，包含 `allow_full_graph=false` 和 `max_graph_depth`。
 
-## 3. GET /context/tasks/{task_id}/graph-slice
+## 4. GET /context/tasks/{task_id}/graph-slice
 
 作用：获取 task-local graph slice。该接口不返回完整仓库 graph。
 
@@ -108,7 +145,7 @@ GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
 
 下游重点读取：优先阅读 `priority` 高、`risk_score` 高、`relation_to_target` 为 `target` / `direct_callee` / `direct_caller` 的节点。
 
-## 4. POST /context/related-context
+## 5. POST /context/related-context
 
 作用：在 graph slice 后补充源码片段、相关符号和局部调用上下文。
 
@@ -119,7 +156,7 @@ GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
 | `repo_id` | Body | string | 是 | 仓库 ID |
 | `task_id` | Body | string | 否 | 任务 ID，建议必传 |
 | `target_file` | Body | string | 否 | 目标文件 |
-| `review_dimension` | Body | string | 否 | 评审维度，建议必传 |
+| `review_dimension` | Body | enum | 否 | 评审维度，建议必传。固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency` |
 | `tags` | Body | array | 否 | 任务标签 |
 | `max_depth` | Body | integer | 否 | 调用关系扩展深度 |
 | `max_files` | Body | integer | 否 | 最大返回文件数 |

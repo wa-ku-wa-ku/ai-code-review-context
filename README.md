@@ -38,6 +38,40 @@ $env:PYTHONPATH = "context"
 python -m uvicorn repo_context.api.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+服务启动后还没有任务包。必须先构建索引，系统才会扫描仓库、写入 SQLite，并生成 `review_tasks`：
+
+```powershell
+$body = @{
+  repo_id = "sample-repo"
+  repo_path = "tests/fixtures/sample_repo"
+  db_path = ".demo_data/sample-repo.db"
+} | ConvertTo-Json
+
+$response = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/index" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+
+$response.review_tasks | Select-Object task_id, task_type, priority
+```
+
+这里的 `repo_id = "sample-repo"` 可以换成你自己的仓库分析 ID，例如 `"payment-service"`；`repo_path = "tests/fixtures/sample_repo"` 可以换成服务端本机可访问的真实 Python 仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
+
+构建索引成功后，下游 agent 先按自己的评审维度查询任务。`review_dimension` 必须使用固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency`。
+
+```powershell
+$tasks = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/tasks?repo_id=sample-repo&review_dimension=security" `
+  -Method Get
+
+$taskId = $tasks.tasks[0].task_id
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/task-package/$taskId?repo_id=sample-repo" `
+  -Method Get
+```
+
 下游 agent 需要模型环境变量：
 
 ```powershell

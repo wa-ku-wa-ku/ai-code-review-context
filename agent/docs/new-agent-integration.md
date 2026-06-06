@@ -39,7 +39,7 @@ agent/
 ## 解耦规则
 
 - agent 通过 HTTP 调用上下文服务，不直接 import `repo_context` 内部模块。
-- agent 只依赖上下文模块公开接口：`task-package`、`graph-slice`、`related-context`、`file-snippet`、`node-detail`、`callers`、`callees`、`task-feedback`。
+- agent 只依赖上下文模块公开接口：`tasks`、`task-package`、`graph-slice`、`related-context`、`file-snippet`、`node-detail`、`callers`、`callees`、`task-feedback`。
 - agent 不读取完整仓库源码，不请求完整仓库 graph。
 - agent 不把最终漏洞报告写回上下文模块；上下文模块只接收任务状态和上下文需求反馈。
 - 前端单独放 `frontend/`，不要放进 `agent/` 或 `context/`。
@@ -69,11 +69,14 @@ from review_agent.config import DownstreamAgentConfig
 4. 按标准顺序调用上下文：
 
 ```text
+GET  /context/tasks?repo_id={repo_id}&review_dimension={review_dimension}
 GET  /context/task-package/{task_id}
 GET  /context/tasks/{task_id}/graph-slice
 POST /context/related-context
 POST /context/task-feedback
 ```
+
+`review_dimension` 必须使用固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency`。
 
 5. 在 `tests/agent/` 下新增对应测试：
 
@@ -130,6 +133,7 @@ tests/
 ## 最小实现清单
 
 - 新 agent 有独立类名和清晰入口。
+- 新 agent 先通过 `/context/tasks` 按固定 `review_dimension` 查询任务。
 - 调用上下文 API 时携带 `repo_id`、`task_id`、`review_dimension`。
 - 任务结束后调用 `/context/task-feedback`。
 - 缺少上下文时返回 `blocked` 和 `requested_context`。

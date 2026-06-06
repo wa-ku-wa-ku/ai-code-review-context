@@ -74,6 +74,7 @@ http://127.0.0.1:8000/
 - `项目标识` 可以保持默认 `sample-repo`，也可以换成自己的 repo id。
 - `仓库路径` 可以先用默认值 `tests/fixtures/sample_repo` 验证流程。
 - 点击 `构建索引`，系统会扫描仓库、解析 AST、写入 SQLite、生成评审任务包。
+- 注意：服务启动后不会自动生成任务包。必须先构建索引，返回值里的 `review_tasks` 才会包含可领取的任务。
 - 点击左侧任务卡片，查看目标文件、目标符号、关注点、初始上下文和 task-local graph slice。
 - 使用 `扩展相关上下文`、`查看目标文件片段`、`查看目标符号` 按需读取更多上下文。
 - 切到 `覆盖率` 视图，可以看到下游工具实际读取过哪些文件、符号和图关系。
@@ -322,7 +323,31 @@ $env:PYTHONPATH = "context"
 uvicorn repo_context.api.app:app --reload
 ```
 
-先索引一个本地仓库：
+服务启动只是让 API 可访问；要生成任务包，必须先调用 `/context/index` 构建索引：
+
+```powershell
+$body = @{
+  repo_id = "sample-repo"
+  repo_path = "tests/fixtures/sample_repo"
+  db_path = ".demo_data/sample-repo.db"
+} | ConvertTo-Json
+
+$response = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/index" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+
+$response.review_tasks | Select-Object task_id, task_type, priority
+```
+
+参数说明：
+
+- `repo_id = "sample-repo"` 是本次仓库分析的自定义 ID，可以换成自己的项目标识，例如 `"payment-service"`。
+- `repo_path = "tests/fixtures/sample_repo"` 是服务端本机可访问的 Python 仓库路径，可以换成真实待评审仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
+- 构建索引成功后，响应里的 `review_tasks` 才会包含可领取的任务。
+
+对应的 HTTP 请求是：
 
 ```http
 POST /context/index
@@ -343,10 +368,27 @@ GET  /context/node-detail
 GET  /context/callees
 GET  /context/callers
 POST /context/related-context
+GET  /context/tasks?repo_id={repo_id}&review_dimension={review_dimension}
 GET  /context/task-package/{task_id}
 ```
 
-示例：
+按评审维度查询任务并领取任务包示例。`review_dimension` 必须使用固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency`。
+
+```powershell
+$tasks = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/tasks?repo_id=sample-repo&review_dimension=security" `
+  -Method Get
+
+$taskId = $tasks.tasks[0].task_id
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/context/task-package/$taskId?repo_id=sample-repo" `
+  -Method Get
+```
+
+如果替换了 `repo_id`，任务包 URL 里的 `repo_id` 也要使用同一个值。
+
+更多查询示例：
 
 ```http
 GET /context/file-snippet?repo_id=sample-repo&file_path=app/api/auth.py&start_line=1&end_line=40

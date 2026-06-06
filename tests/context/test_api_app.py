@@ -167,6 +167,45 @@ def test_context_api_related_context_and_task_package_are_local(tmp_path: Path) 
     )
 
 
+def test_context_api_lists_tasks_by_review_dimension(tmp_path: Path) -> None:
+    client = _indexed_client(tmp_path, "api-context-dimension")
+
+    security_response = client.get(
+        "/context/tasks",
+        params={"repo_id": "api-context-dimension", "review_dimension": "security"},
+    )
+    logic_response = client.get(
+        "/context/tasks",
+        params={"repo_id": "api-context-dimension", "review_dimension": "function_logic"},
+    )
+    invalid_response = client.get(
+        "/context/tasks",
+        params={"repo_id": "api-context-dimension", "review_dimension": "unknown"},
+    )
+    openapi = client.get("/openapi.json").json()
+
+    assert security_response.status_code == 200
+    security = security_response.json()
+    assert security["repo_id"] == "api-context-dimension"
+    assert security["review_dimension"] == "security"
+    assert security["tasks"]
+    assert all(task["review_dimension"] == "security" for task in security["tasks"])
+    assert any(task["task_id"] == "task_route_post_login" for task in security["tasks"])
+
+    assert logic_response.status_code == 200
+    logic = logic_response.json()
+    assert all(task["review_dimension"] == "function_logic" for task in logic["tasks"])
+    assert invalid_response.status_code == 422
+
+    enum_values = openapi["components"]["schemas"]["ReviewDimension"]["enum"]
+    assert enum_values == [
+        "security",
+        "function_logic",
+        "coding_style",
+        "requirement_consistency",
+    ]
+
+
 def test_context_api_task_feedback_accepts_completed_and_blocked(tmp_path: Path) -> None:
     client = _indexed_client(tmp_path, "api-context-feedback")
     completed = client.post(

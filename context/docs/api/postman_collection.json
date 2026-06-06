@@ -100,6 +100,34 @@
       "name": "02 Task Package",
       "item": [
         {
+          "name": "List Tasks By Review Dimension",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/context/tasks?repo_id={{repo_id}}&review_dimension={{review_dimension}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "context",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "repo_id",
+                  "value": "{{repo_id}}"
+                },
+                {
+                  "key": "review_dimension",
+                  "value": "{{review_dimension}}"
+                }
+              ]
+            },
+            "description": "按固定 review_dimension 枚举查询任务列表；从 tasks[].task_id 读取任务 ID 后再调用 task-package。"
+          }
+        },
+        {
           "name": "Get Task Package",
           "request": {
             "method": "GET",

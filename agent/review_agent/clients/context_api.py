@@ -51,6 +51,18 @@ class ContextApiClient:
             params={"repo_id": repo_id},
         )
 
+    def list_tasks(
+        self,
+        *,
+        repo_id: str,
+        review_dimension: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/context/tasks",
+            params={"repo_id": repo_id, "review_dimension": review_dimension},
+        )
+
     def get_task_graph_slice(
         self,
         *,

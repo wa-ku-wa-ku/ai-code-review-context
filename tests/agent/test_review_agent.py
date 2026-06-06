@@ -16,6 +16,8 @@ def test_context_api_client_calls_standard_flow() -> None:
         requests.append(request)
         if request.url.path == "/context/task-package/task_1":
             return httpx.Response(200, json={"task_id": "task_1"})
+        if request.url.path == "/context/tasks":
+            return httpx.Response(200, json={"tasks": [{"task_id": "task_1"}]})
         if request.url.path == "/context/tasks/task_1/graph-slice":
             return httpx.Response(200, json={"nodes": []})
         if request.url.path == "/context/related-context":
@@ -31,6 +33,7 @@ def test_context_api_client_calls_standard_flow() -> None:
     client = ContextApiClient("http://context.test", client=http_client)
 
     assert client.get_task_package(repo_id="repo-1", task_id="task_1")["task_id"] == "task_1"
+    assert client.list_tasks(repo_id="repo-1", review_dimension="security")["tasks"][0]["task_id"] == "task_1"
     assert client.get_task_graph_slice(repo_id="repo-1", task_id="task_1")["nodes"] == []
     assert client.get_related_context(
         repo_id="repo-1",
@@ -49,6 +52,7 @@ def test_context_api_client_calls_standard_flow() -> None:
 
     assert [request.url.path for request in requests] == [
         "/context/task-package/task_1",
+        "/context/tasks",
         "/context/tasks/task_1/graph-slice",
         "/context/related-context",
         "/context/task-feedback",
