@@ -8,7 +8,7 @@ from repo_context.ingest.repo_loader import load_repo_path
 from repo_context.ingest.zip_loader import extract_zip
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_REPO = ROOT / "tests" / "fixtures" / "sample_repo"
 
 

@@ -3,7 +3,7 @@ from pathlib import Path
 from repo_context.parser.ast_parser import parse_python_file
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_REPO = ROOT / "tests" / "fixtures" / "sample_repo"
 
 

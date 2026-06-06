@@ -3,7 +3,7 @@ from pathlib import Path
 import repo_context
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_REPO = ROOT / "tests" / "fixtures" / "sample_repo"
 
 

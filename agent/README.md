@@ -6,6 +6,7 @@
 
 ```text
 agent/
+├── docs/          # 新 agent 接入、扩展和协作说明
 └── review_agent/
     ├── clients/   # 外部 API client：context API、LLM API
     ├── config/    # 环境变量配置
@@ -37,4 +38,8 @@ $env:OPENAI_MODEL = "<model-name>"
 - 不直接 import `repo_context` 内部模块。
 - 不请求完整仓库源码。
 - 不提交最终漏洞报告，只提交任务状态和上下文需求。
+
+## 新 agent 接入
+
+新增 agent 的目录、配置和测试约定见 [docs/new-agent-integration.md](docs/new-agent-integration.md)。
 

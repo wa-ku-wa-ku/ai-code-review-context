@@ -52,4 +52,4 @@ $env:OPENAI_MODEL = "<model-name>"
 - 上下文 API 文档：[context/docs/context-api-reference.md](context/docs/context-api-reference.md)
 - 下游接入说明：[context/docs/downstream-agent-integration.md](context/docs/downstream-agent-integration.md)
 - agent 模块说明：[agent/README.md](agent/README.md)
-
+- 新 agent 接入指南：[agent/docs/new-agent-integration.md](agent/docs/new-agent-integration.md)

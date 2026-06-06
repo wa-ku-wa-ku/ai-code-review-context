@@ -11,7 +11,7 @@ from repo_context.service.coverage_service import CoverageService
 from repo_context.task.review_task_generator import ReviewTaskGenerator
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_REPO = ROOT / "tests" / "fixtures" / "sample_repo"
 
 

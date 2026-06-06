@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from repo_context.api.app import app
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_REPO = ROOT / "tests" / "fixtures" / "sample_repo"
 
 
