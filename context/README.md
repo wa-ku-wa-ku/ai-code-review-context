@@ -346,6 +346,7 @@ $response.review_tasks | Select-Object task_id, task_type, priority
 - `repo_id = "sample-repo"` 是本次仓库分析的自定义 ID，可以换成自己的项目标识，例如 `"payment-service"`。
 - `repo_path = "tests/fixtures/sample_repo"` 是服务端本机可访问的 Python 仓库路径，可以换成真实待评审仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
 - 构建索引成功后，响应里的 `review_tasks` 才会包含可领取的任务。
+- 构建索引后，后续任务查询、任务包获取、上下文工具调用和任务反馈都应继续使用同一个 `repo_id`。
 
 对应的 HTTP 请求是：
 
@@ -387,6 +388,7 @@ Invoke-RestMethod `
 ```
 
 如果替换了 `repo_id`，任务包 URL 里的 `repo_id` 也要使用同一个值。
+后续上下文工具调用和 `POST /context/task-feedback` 也应继续携带这个 `task_id`。
 
 更多查询示例：
 

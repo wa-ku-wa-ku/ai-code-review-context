@@ -68,6 +68,14 @@ $response.review_tasks | Select-Object task_id, task_type, priority
 - `repo_path`：服务端本机可访问的 Python 仓库目录。
 - `db_path`：SQLite 索引文件路径。
 
+### repo_id 说明
+
+`repo_id` 是一次仓库索引的统一标识，在调用 `POST /context/index` 时由调用方传入。
+
+构建索引后，后续所有接口都应使用同一个 `repo_id`，包括任务查询、任务包获取、上下文工具调用和任务反馈。
+
+`repo_id` 用于关联仓库摘要、任务列表、任务包、usage 记录和 task feedback。
+
 返回重点字段：
 
 - `repo_summary`：仓库摘要。
@@ -112,6 +120,22 @@ GET /context/tasks?repo_id=sample-repo&review_dimension=security
   }
 }
 ```
+
+### task_id 说明
+
+`task_id` 是 context 模块在生成 review task 时产生的任务标识。
+
+下游 agent 可以在获取任务列表时获取 ID，也就是读取 `tasks[].task_id`。
+
+下游 agent 拿到 `task_id` 后，再调用：
+
+```http
+GET /context/task-package/{task_id}?repo_id={repo_id}
+```
+
+获取完整任务包。
+
+后续上下文工具调用和 `task-feedback` 也应继续携带该 `task_id`。
 
 下游调度建议：
 

@@ -58,6 +58,8 @@ $response.review_tasks | Select-Object task_id, task_type, priority
 
 这里的 `repo_id = "sample-repo"` 可以换成你自己的仓库分析 ID，例如 `"payment-service"`；`repo_path = "tests/fixtures/sample_repo"` 可以换成服务端本机可访问的真实 Python 仓库路径，例如 `"D:\demo_repos\my_python_repo"`。
 
+构建索引后，后续任务查询、任务包获取、上下文工具调用和任务反馈都应继续使用同一个 `repo_id`。
+
 构建索引成功后，下游 agent 先按自己的评审维度查询任务。`review_dimension` 必须使用固定枚举：`security`、`function_logic`、`coding_style`、`requirement_consistency`。
 
 ```powershell
@@ -71,6 +73,8 @@ Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/context/task-package/$taskId?repo_id=sample-repo" `
   -Method Get
 ```
+
+后续上下文工具调用和 `POST /context/task-feedback` 也应继续携带这个 `task_id`。
 
 下游 agent 需要模型环境变量：
 

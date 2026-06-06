@@ -120,6 +120,7 @@ GET /
 | `repo_summary.framework` | `fastapi` |
 | `review_tasks` | 非空 |
 | `review_tasks[*].task_id` | 包含 `task_route_post_login` |
+| 后续任务领取 | 建议调用 `/context/tasks?repo_id=sample-repo&review_dimension=security` 获取 `tasks[].task_id` |
 
 ### 用例 2：使用临时数据库路径
 
@@ -213,7 +214,85 @@ GET /
 | HTTP 状态码 | `400` |
 | `detail` | 包含 `repo_path is not a directory` |
 
-## 5. GET /context/task-package/{task_id}
+## 5. GET /context/tasks
+
+该接口用于下游 agent 按固定评审维度领取任务。必须先成功调用 `/context/index` 构建索引。
+
+固定 `review_dimension` 枚举：
+
+| review_dimension | 说明 |
+| --- | --- |
+| `security` | 安全评审任务 |
+| `function_logic` | 功能逻辑评审任务 |
+| `coding_style` | 代码风格和可维护性任务 |
+| `requirement_consistency` | 需求一致性任务，当前主要作为预留维度 |
+
+### 用例 1：查询安全评审任务
+
+请求：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=security
+```
+
+预期：
+
+```json
+{
+  "repo_id": "sample-repo",
+  "review_dimension": "security",
+  "tasks": [
+    {
+      "task_id": "task_route_post_login",
+      "review_dimension": "security"
+    }
+  ]
+}
+```
+
+验收点：
+
+| 项 | 预期 |
+| --- | --- |
+| HTTP 状态码 | `200` |
+| `repo_id` | `sample-repo` |
+| `review_dimension` | `security` |
+| `tasks` | 非空 |
+| `tasks[*].review_dimension` | 全部等于 `security` |
+| `tasks[*].task_id` | 包含 `task_route_post_login` |
+
+### 用例 2：查询功能逻辑评审任务
+
+请求：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=function_logic
+```
+
+验收点：
+
+| 项 | 预期 |
+| --- | --- |
+| HTTP 状态码 | `200` |
+| `review_dimension` | `function_logic` |
+| `tasks[*].review_dimension` | 全部等于 `function_logic` |
+
+### 用例 3：非法评审维度
+
+请求：
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=unknown
+```
+
+验收点：
+
+| 项 | 预期 |
+| --- | --- |
+| HTTP 状态码 | `422` |
+| `detail` | 包含枚举校验错误 |
+
+## 6. GET /context/task-package/{task_id}
 
 ### 用例 1：获取登录接口任务包
 
@@ -297,7 +376,7 @@ GET /context/task-package/not-exist?repo_id=sample-repo
 | HTTP 状态码 | `404` |
 | `detail` | `task not found` |
 
-## 6. GET /context/tasks/{task_id}/graph-slice
+## 7. GET /context/tasks/{task_id}/graph-slice
 
 ### 用例 1：获取 depth=1 的任务局部图
 
@@ -377,7 +456,7 @@ GET /context/tasks/not-exist/graph-slice?repo_id=sample-repo&depth=1
 
 说明：当前实现对不存在的 task graph slice 返回空图，而不是 404。
 
-## 7. POST /context/related-context
+## 8. POST /context/related-context
 
 ### 用例 1：扩展登录任务上下文
 
@@ -481,7 +560,7 @@ GET /context/tasks/not-exist/graph-slice?repo_id=sample-repo&depth=1
 | HTTP 状态码 | `400` |
 | `detail` | `repo_id is required` |
 
-## 8. GET /context/file-snippet
+## 9. GET /context/file-snippet
 
 ### 用例 1：读取目标文件前 5 行
 
@@ -552,7 +631,7 @@ GET /context/file-snippet?repo_id=sample-repo&file_path=../../secret.txt&start_l
 | HTTP 状态码 | `400` |
 | `detail` | 包含 `escapes repository` |
 
-## 9. GET /context/node-detail
+## 10. GET /context/node-detail
 
 ### 用例 1：用 symbol_name 查询 login
 
@@ -634,7 +713,7 @@ GET /context/node-detail?repo_id=sample-repo&symbol_name=not_exist_symbol
 | HTTP 状态码 | `404` |
 | `detail` | `node not found` |
 
-## 10. GET /context/callees
+## 11. GET /context/callees
 
 ### 用例 1：查询 login 的直接下游
 
@@ -695,7 +774,7 @@ GET /context/callees?repo_id=sample-repo&symbol_name=not_exist_symbol&depth=1
 | HTTP 状态码 | `200` |
 | 返回体 | `[]` |
 
-## 11. GET /context/callers
+## 12. GET /context/callers
 
 ### 用例 1：查询 authenticate 的调用者
 
@@ -756,7 +835,7 @@ GET /context/callers?repo_id=sample-repo&symbol_name=not_exist_symbol&depth=1
 | HTTP 状态码 | `200` |
 | 返回体 | `[]` |
 
-## 12. POST /context/task-feedback
+## 13. POST /context/task-feedback
 
 ### 用例 1：任务完成
 
@@ -853,7 +932,7 @@ GET /context/callers?repo_id=sample-repo&symbol_name=not_exist_symbol&depth=1
 | HTTP 状态码 | `422` |
 | `detail` | 包含 Pydantic 缺字段校验信息 |
 
-## 13. GET /demo/{repo_id}/summary
+## 14. GET /demo/{repo_id}/summary
 
 ### 用例 1：查看仓库摘要
 
@@ -909,7 +988,7 @@ GET /demo/not-indexed/summary
 | HTTP 状态码 | `404` |
 | `detail` | `repo_id has not been indexed in this process` |
 
-## 14. GET /demo/{repo_id}/tasks
+## 15. GET /demo/{repo_id}/tasks
 
 ### 用例 1：获取任务列表
 
@@ -959,7 +1038,7 @@ GET /demo/not-indexed/tasks
 | HTTP 状态码 | `404` |
 | `detail` | `repo_id has not been indexed in this process` |
 
-## 15. GET /demo/{repo_id}/tasks/{task_id}/context
+## 16. GET /demo/{repo_id}/tasks/{task_id}/context
 
 ### 用例 1：获取任务推荐上下文
 
@@ -993,7 +1072,7 @@ GET /demo/sample-repo/tasks/not-exist/context
 | HTTP 状态码 | `200` 或空上下文结构 |
 | 说明 | 当前 Demo 兼容接口偏宽松，建议核心接入优先使用 `/context/task-package/{task_id}` |
 
-## 16. GET /demo/{repo_id}/tasks/{task_id}/package
+## 17. GET /demo/{repo_id}/tasks/{task_id}/package
 
 ### 用例 1：获取 Demo 任务包
 
@@ -1027,7 +1106,7 @@ GET /demo/sample-repo/tasks/not-exist/package
 | HTTP 状态码 | `404` |
 | `detail` | `task not found` |
 
-## 17. GET /demo/{repo_id}/nodes/{node_id}
+## 18. GET /demo/{repo_id}/nodes/{node_id}
 
 ### 用例 1：按 node_id 获取节点详情
 
@@ -1063,7 +1142,7 @@ GET /demo/sample-repo/nodes/not-exist
 | HTTP 状态码 | `404` |
 | `detail` | `node not found` |
 
-## 18. GET /demo/{repo_id}/nodes/{node_id}/callees
+## 19. GET /demo/{repo_id}/nodes/{node_id}/callees
 
 ### 用例 1：查询 Demo 节点下游
 
@@ -1096,7 +1175,7 @@ GET /demo/sample-repo/nodes/not-exist/callees?depth=1
 | HTTP 状态码 | `200` |
 | 返回体 | `[]` |
 
-## 19. GET /demo/{repo_id}/nodes/{node_id}/callers
+## 20. GET /demo/{repo_id}/nodes/{node_id}/callers
 
 ### 用例 1：查询 Demo 节点上游
 
@@ -1129,7 +1208,7 @@ GET /demo/sample-repo/nodes/not-exist/callers?depth=1
 | HTTP 状态码 | `200` |
 | 返回体 | `[]` |
 
-## 20. GET /demo/{repo_id}/files/snippet
+## 21. GET /demo/{repo_id}/files/snippet
 
 ### 用例 1：Demo 源码片段
 
@@ -1162,7 +1241,7 @@ GET /demo/sample-repo/files/snippet?file_path=../../secret.txt&start_line=1&end_
 | HTTP 状态码 | `500` 或错误响应 |
 | 说明 | Demo 旧接口未统一捕获该异常；核心接入应使用 `/context/file-snippet`，其返回 `400` |
 
-## 21. POST /demo/{repo_id}/context/related
+## 22. POST /demo/{repo_id}/context/related
 
 ### 用例 1：Demo 相关上下文
 
@@ -1211,7 +1290,7 @@ Content-Type: application/json
 | HTTP 状态码 | `200` |
 | 返回体 | 保持 JSON serializable |
 
-## 22. GET /demo/{repo_id}/coverage
+## 23. GET /demo/{repo_id}/coverage
 
 ### 用例 1：刚索引后查看覆盖率
 
@@ -1282,7 +1361,7 @@ GET /demo/not-indexed/coverage
 | HTTP 状态码 | `404` |
 | `detail` | `repo_id has not been indexed in this process` |
 
-## 23. GET /openapi.json
+## 24. GET /openapi.json
 
 ### 用例 1：导出 OpenAPI
 
@@ -1308,6 +1387,7 @@ GET /openapi.json
 ```text
 GET  /health
 POST /context/index
+GET  /context/tasks?repo_id={repo_id}&review_dimension={review_dimension}
 GET  /context/task-package/{task_id}
 GET  /context/tasks/{task_id}/graph-slice
 POST /context/related-context
@@ -1332,4 +1412,3 @@ GET  /openapi.json
 | 图接口 | `nodes` 非空，节点包含 `relation_to_target`、`priority`、`risk_score` |
 | 覆盖率接口 | 调用工具后 `usage_records` 包含对应 `tool_name` |
 | 异常接口 | 状态码和 `detail` 关键错误文本 |
-

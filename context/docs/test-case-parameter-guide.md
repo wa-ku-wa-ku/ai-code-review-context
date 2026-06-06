@@ -24,7 +24,11 @@
 
 ### `repo_id`
 
-`repo_id` 是一次仓库索引会话的名字，不要求等于真实项目名。调用 `/context/index` 后，后续所有查询都要带同一个 `repo_id`，否则服务端找不到刚刚建立的索引。
+`repo_id` 是一次仓库索引的统一标识，在调用 `POST /context/index` 时由调用方传入。
+
+构建索引后，后续所有接口都应使用同一个 `repo_id`，包括任务查询、任务包获取、上下文工具调用和任务反馈。
+
+`repo_id` 用于关联仓库摘要、任务列表、任务包、usage 记录和 task feedback。
 
 示例：
 
@@ -76,7 +80,19 @@ db_path = tmp_path / "sample-repo.db"
 
 ### `task_id`
 
-`task_id` 来自 `/context/index` 返回的 `review_tasks[*].task_id`，或者 `/demo/{repo_id}/tasks` 返回的任务列表。
+`task_id` 是 context 模块在生成 review task 时产生的任务标识。
+
+下游 agent 可以在获取任务列表时获取 ID，也就是读取 `/context/tasks` 返回结果里的 `tasks[].task_id`。
+
+下游 agent 拿到 `task_id` 后，再调用：
+
+```http
+GET /context/task-package/{task_id}?repo_id={repo_id}
+```
+
+获取完整任务包。
+
+后续上下文工具调用和 `task-feedback` 也应继续携带该 `task_id`。
 
 示例仓库里常用：
 
@@ -150,7 +166,22 @@ Content-Type: application/json
 }
 ```
 
-### 2. 获取任务包
+### 2. 按评审维度查询任务
+
+```http
+GET /context/tasks?repo_id=sample-repo&review_dimension=security
+```
+
+参数来源：
+
+| 参数 | 从哪里来 |
+| --- | --- |
+| `repo_id` | 建索引时传入的 `repo_id` |
+| `review_dimension` | 固定枚举之一，例如 `security`、`function_logic`、`coding_style`、`requirement_consistency` |
+
+返回里的 `tasks[*].task_id` 用于后续获取任务包。
+
+### 3. 获取任务包
 
 ```http
 GET /context/task-package/task_route_post_login?repo_id=sample-repo
@@ -160,10 +191,10 @@ GET /context/task-package/task_route_post_login?repo_id=sample-repo
 
 | 参数 | 从哪里来 |
 | --- | --- |
-| `task_id` | `/context/index` 返回的 `review_tasks[*].task_id` |
+| `task_id` | `/context/tasks` 返回的 `tasks[*].task_id` |
 | `repo_id` | 建索引时传入的 `repo_id` |
 
-### 3. 获取任务局部调用图
+### 4. 获取任务局部调用图
 
 ```http
 GET /context/tasks/task_route_post_login/graph-slice?repo_id=sample-repo&depth=2
@@ -343,4 +374,3 @@ def test_can_read_login_snippet(tmp_path: Path) -> None:
 | `escapes repository` | `file_path` 使用了绝对路径或 `../` | 改成仓库内相对路径 |
 | `node not found` | `symbol_name` 不存在，或 `node_id` 手写错误 | 先用 `search_symbol()` 或 `/context/node-detail?symbol_name=...` 查 |
 | 覆盖率没有变化 | 调工具时没带 `task_id` / `review_dimension`，或没有调用会记录 usage 的工具 | 查询源码、节点、调用图时带上这两个参数 |
-
