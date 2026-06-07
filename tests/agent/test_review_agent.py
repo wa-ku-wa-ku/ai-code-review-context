@@ -2,6 +2,7 @@ import json
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from review_agent.config import DownstreamAgentConfig, LLMConfigError
 from review_agent.clients import ContextApiClient, LLMReviewClient, ReviewResult
@@ -154,6 +155,71 @@ def test_function_logic_agent_lists_and_runs_task_with_context_tools() -> None:
         "get_callers",
         "submit_task_feedback",
     ]
+
+
+def test_function_logic_agent_runs_ai_decided_tool_trace() -> None:
+    context_client = _FakeContextClient()
+    agent = FunctionLogicAgent(
+        agent_name="function-logic-agent",
+        context_client=context_client,
+        llm_client=_FakeTraceLLMClient(),
+    )
+
+    result = agent.run_task_trace(repo_id="repo-1", task_id="task_1", max_steps=3)
+
+    event_types = [event["type"] for event in result["trace"]]
+    assert "ai_request" in event_types
+    assert "ai_response" in event_types
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    assert event_types[-2:] == ["final_result", "task_feedback"]
+    assert result["final_result"]["status"] == "completed"
+    assert context_client.calls == [
+        "get_task_package",
+        "get_task_graph_slice",
+        "get_related_context",
+        "get_node_detail",
+        "submit_task_feedback",
+    ]
+
+
+def test_agent_demo_page_loads() -> None:
+    from review_agent.api.app import app
+
+    client = TestClient(app)
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Function Logic Agent Trace" in response.text
+    assert "/agent/function-logic/run" in response.text
+
+
+def test_agent_demo_run_endpoint_returns_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    import review_agent.api.app as app_module
+
+    class FakeAgent:
+        @classmethod
+        def from_env(cls) -> "FakeAgent":
+            return cls()
+
+        def run_task_trace(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "repo_id": kwargs["repo_id"],
+                "task_id": kwargs["task_id"],
+                "trace": [{"type": "ai_response", "payload": {"action": "final"}}],
+                "final_result": {"status": "completed"},
+            }
+
+    monkeypatch.setattr(app_module, "FunctionLogicAgent", FakeAgent)
+    client = TestClient(app_module.app)
+
+    response = client.post(
+        "/agent/function-logic/run",
+        json={"repo_id": "repo-1", "task_id": "task_1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["trace"][0]["type"] == "ai_response"
 
 
 def test_context_toolbelt_exposes_all_context_interfaces() -> None:
@@ -332,3 +398,34 @@ class _FakeLLMClient:
             message="done",
             downstream_result_ref="result-1",
         )
+
+
+class _FakeTraceLLMClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def decide_next_action(
+        self,
+        *,
+        task_package: dict[str, object],
+        graph_slice: dict[str, object],
+        related_context: dict[str, object],
+        trace: list[dict[str, object]],
+        available_tools: list[str],
+    ) -> dict[str, object]:
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "action": "call_tool",
+                "tool_name": "get_node_detail",
+                "tool_args": {"symbol_name": "create_user"},
+                "reason": "Need target function body before final reasoning.",
+            }
+        return {
+            "action": "final",
+            "status": "completed",
+            "context_sufficient": True,
+            "message": "Function logic reviewed.",
+            "requested_context": [],
+            "downstream_result_ref": None,
+        }

@@ -94,6 +94,41 @@ class LLMReviewClient:
         parsed = _parse_review_content(content)
         return ReviewResult(raw_response=payload, **parsed)
 
+    def decide_next_action(
+        self,
+        *,
+        task_package: dict[str, Any],
+        graph_slice: dict[str, Any],
+        related_context: dict[str, Any],
+        trace: list[dict[str, Any]],
+        available_tools: list[str],
+    ) -> dict[str, Any]:
+        """让模型决定下一步是调用工具还是给出最终结论。
+
+        返回 JSON 约定：
+        - call_tool: {"action": "call_tool", "tool_name": "...", "tool_args": {...}, "reason": "..."}
+        - final: {"action": "final", "status": "completed|blocked", "context_sufficient": true|false, ...}
+        """
+
+        prompt = _build_action_prompt(
+            task_package=task_package,
+            graph_slice=graph_slice,
+            related_context=related_context,
+            trace=trace,
+            available_tools=available_tools,
+        )
+        if self._config.provider in {"openai", "deepseek"}:
+            payload = self._call_openai_compatible(prompt)
+            content = _extract_openai_content(payload)
+        elif self._config.provider == "anthropic":
+            payload = self._call_anthropic(prompt)
+            content = _extract_anthropic_content(payload)
+        else:
+            raise ValueError(f"unsupported provider: {self._config.provider}")
+        decision = _parse_decision_content(content)
+        decision["raw_response"] = payload
+        return decision
+
     def _call_openai_compatible(self, prompt: str) -> dict[str, Any]:
         """调用 OpenAI compatible 的 /chat/completions 接口。"""
 
@@ -169,6 +204,54 @@ def _build_prompt(
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _build_action_prompt(
+    *,
+    task_package: dict[str, Any],
+    graph_slice: dict[str, Any],
+    related_context: dict[str, Any],
+    trace: list[dict[str, Any]],
+    available_tools: list[str],
+) -> str:
+    """构造“下一步动作”提示词。
+
+    这里把历史 trace 一并传入，让模型知道已经调用过哪些工具、拿到了什么结果。
+    agent 仍然负责真正执行工具，模型只负责选择下一步动作和说明原因。
+    """
+
+    payload = {
+        "role": "function_logic_agent_controller",
+        "task_package": task_package,
+        "task_graph_slice": graph_slice,
+        "related_context": related_context,
+        "trace_so_far": trace,
+        "available_tools": available_tools,
+        "allowed_tool_names": [
+            "get_related_context",
+            "get_file_snippet",
+            "get_node_detail",
+            "get_callees",
+            "get_callers",
+        ],
+        "required_output": {
+            "call_tool": {
+                "action": "call_tool",
+                "tool_name": "one allowed tool name",
+                "tool_args": "JSON object arguments",
+                "reason": "why this tool is needed",
+            },
+            "final": {
+                "action": "final",
+                "status": "completed or blocked",
+                "context_sufficient": "true or false",
+                "message": "final functional-logic conclusion or blocking reason",
+                "requested_context": "array, empty unless blocked",
+                "downstream_result_ref": "optional string or null",
+            },
+        },
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _extract_openai_content(payload: dict[str, Any]) -> str:
     return str(payload.get("choices", [{}])[0].get("message", {}).get("content", ""))
 
@@ -201,6 +284,45 @@ def _parse_review_content(content: str) -> dict[str, Any]:
     return {
         "status": status,
         "context_sufficient": context_sufficient,
+        "message": str(data.get("message") or "task processed"),
+        "requested_context": requested_context,
+        "downstream_result_ref": data.get("downstream_result_ref"),
+    }
+
+
+def _parse_decision_content(content: str) -> dict[str, Any]:
+    """解析模型的下一步动作。
+
+    如果模型输出不符合约定，则保守地转成 final/blocked，避免无限循环。
+    """
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", content, flags=re.S)
+        data = json.loads(match.group(0)) if match else {"message": content}
+
+    if not isinstance(data, dict):
+        data = {"message": str(data)}
+    action = str(data.get("action") or "final")
+    if action == "call_tool":
+        tool_args = data.get("tool_args") or {}
+        if not isinstance(tool_args, dict):
+            tool_args = {}
+        return {
+            "action": "call_tool",
+            "tool_name": str(data.get("tool_name") or ""),
+            "tool_args": tool_args,
+            "reason": str(data.get("reason") or "model requested context tool"),
+        }
+    requested_context = data.get("requested_context") or []
+    if not isinstance(requested_context, list):
+        requested_context = []
+    status = str(data.get("status") or "completed")
+    return {
+        "action": "final",
+        "status": status,
+        "context_sufficient": bool(data.get("context_sufficient", status != "blocked")),
         "message": str(data.get("message") or "task processed"),
         "requested_context": requested_context,
         "downstream_result_ref": data.get("downstream_result_ref"),
