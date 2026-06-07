@@ -50,7 +50,7 @@ class DownstreamAgentConfig:
 
         provider = _read_provider()
         return cls(
-            agent_name=os.getenv("REVIEW_AGENT_NAME", "function-logic-agent"),
+            agent_name=os.getenv("REVIEW_AGENT_NAME", "function-logic-review-agent"),
             context_api=ContextApiConfig(
                 base_url=os.getenv("CONTEXT_API_BASE_URL", "http://127.0.0.1:8000"),
                 timeout_seconds=float(os.getenv("CONTEXT_API_TIMEOUT", "30")),

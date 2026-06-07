@@ -17,7 +17,17 @@ def test_context_api_client_calls_standard_flow() -> None:
         if request.url.path == "/context/task-package/task_1":
             return httpx.Response(200, json={"task_id": "task_1"})
         if request.url.path == "/context/tasks":
-            return httpx.Response(200, json={"tasks": [{"task_id": "task_1"}]})
+            params = dict(request.url.params)
+            tasks = [
+                {"task_id": "task_1", "review_dimension": "security"},
+                {"task_id": "task_2", "review_dimension": "function_logic"},
+            ]
+            if "review_dimension" in params:
+                tasks = [
+                    task for task in tasks
+                    if task["review_dimension"] == params["review_dimension"]
+                ]
+            return httpx.Response(200, json={"tasks": tasks})
         if request.url.path == "/context/tasks/task_1/graph-slice":
             return httpx.Response(200, json={"nodes": []})
         if request.url.path == "/context/related-context":
@@ -33,6 +43,11 @@ def test_context_api_client_calls_standard_flow() -> None:
     client = ContextApiClient("http://context.test", client=http_client)
 
     assert client.get_task_package(repo_id="repo-1", task_id="task_1")["task_id"] == "task_1"
+    assert len(client.get_tasks(repo_id="repo-1")["tasks"]) == 2
+    assert client.get_tasks(
+        repo_id="repo-1",
+        review_dimension="function_logic",
+    )["tasks"][0]["task_id"] == "task_2"
     assert client.list_tasks(repo_id="repo-1", review_dimension="security")["tasks"][0]["task_id"] == "task_1"
     assert client.get_task_graph_slice(repo_id="repo-1", task_id="task_1")["nodes"] == []
     assert client.get_related_context(
@@ -52,6 +67,8 @@ def test_context_api_client_calls_standard_flow() -> None:
 
     assert [request.url.path for request in requests] == [
         "/context/task-package/task_1",
+        "/context/tasks",
+        "/context/tasks",
         "/context/tasks",
         "/context/tasks/task_1/graph-slice",
         "/context/related-context",
@@ -121,6 +138,44 @@ def test_basic_review_agent_runs_task_and_submits_feedback() -> None:
     ]
 
 
+def test_basic_review_agent_runs_dimension_with_filtered_tasks() -> None:
+    context_client = _FakeContextClient()
+    agent = BasicReviewAgent(
+        agent_name="basic-agent",
+        context_client=context_client,
+        llm_client=_FakeLLMClient(),
+    )
+
+    results = agent.run_dimension(repo_id="repo-1", review_dimension="function_logic")
+
+    assert [result["task_id"] for result in results] == ["task_1"]
+    assert context_client.calls == [
+        "get_tasks",
+        "get_task_package",
+        "get_task_graph_slice",
+        "get_related_context",
+        "submit_task_feedback",
+    ]
+
+
+def test_basic_review_agent_submits_context_request_when_blocked() -> None:
+    context_client = _FakeContextClient()
+    agent = BasicReviewAgent(
+        agent_name="basic-agent",
+        context_client=context_client,
+        llm_client=_BlockedLLMClient(),
+    )
+
+    result = agent.run_task(repo_id="repo-1", task_id="task_1")
+
+    assert result["review_result"]["status"] == "blocked"
+    assert context_client.feedback_payload["feedback_type"] == "context_request"
+    assert context_client.feedback_payload["need_more_context"] is True
+    assert context_client.feedback_payload["requested_context"] == [
+        {"type": "callers", "symbol_name": "create_user", "depth": 2}
+    ]
+
+
 def test_function_logic_agent_lists_and_runs_task_with_context_tools() -> None:
     context_client = _FakeContextClient()
     agent = FunctionLogicAgent(
@@ -143,8 +198,8 @@ def test_function_logic_agent_lists_and_runs_task_with_context_tools() -> None:
         "get_callers",
     }
     assert context_client.calls == [
-        "list_tasks",
-        "list_tasks",
+        "get_tasks",
+        "get_tasks",
         "get_task_package",
         "get_task_graph_slice",
         "get_related_context",
@@ -168,6 +223,7 @@ def test_context_toolbelt_exposes_all_context_interfaces() -> None:
         "get_related_context",
         "get_task_graph_slice",
         "get_task_package",
+        "get_tasks",
         "list_tasks",
         "submit_task_feedback",
     ]
@@ -198,7 +254,7 @@ def test_config_from_env_uses_deepseek_v4_flash_by_default(monkeypatch: pytest.M
 
     config = DownstreamAgentConfig.from_env()
 
-    assert config.agent_name == "function-logic-agent"
+    assert config.agent_name == "function-logic-review-agent"
     assert config.llm_api.provider == "deepseek"
     assert config.llm_api.model == "deepseek-v4-flash"
 
@@ -224,13 +280,22 @@ class _FakeContextClient:
         self.calls.append("build_index")
         return {"repo_id": repo_id, "review_tasks": [{"task_id": "task_1"}]}
 
-    def list_tasks(self, *, repo_id: str, review_dimension: str) -> dict[str, object]:
-        self.calls.append("list_tasks")
+    def get_tasks(self, *, repo_id: str, review_dimension: str | None = None) -> dict[str, object]:
+        self.calls.append("get_tasks")
         return {
             "repo_id": repo_id,
             "review_dimension": review_dimension,
-            "tasks": [{"task_id": "task_1", "status": "pending"}],
+            "tasks": [
+                {
+                    "task_id": "task_1",
+                    "status": "pending",
+                    "review_dimension": "function_logic",
+                }
+            ],
         }
+
+    def list_tasks(self, *, repo_id: str, review_dimension: str | None = None) -> dict[str, object]:
+        return self.get_tasks(repo_id=repo_id, review_dimension=review_dimension)
 
     def get_task_package(self, *, repo_id: str, task_id: str) -> dict[str, object]:
         self.calls.append("get_task_package")
@@ -331,4 +396,23 @@ class _FakeLLMClient:
             context_sufficient=True,
             message="done",
             downstream_result_ref="result-1",
+        )
+
+
+class _BlockedLLMClient:
+    def review_task(
+        self,
+        *,
+        task_package: dict[str, object],
+        graph_slice: dict[str, object],
+        related_context: dict[str, object],
+        tool_results: list[dict[str, object]] | None = None,
+    ) -> ReviewResult:
+        return ReviewResult(
+            status="blocked",
+            context_sufficient=False,
+            message="need callers",
+            requested_context=[
+                {"type": "callers", "symbol_name": "create_user", "depth": 2}
+            ],
         )

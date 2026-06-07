@@ -54,11 +54,11 @@ class ContextApiClient:
             payload["db_path"] = str(db_path)
         return self._request("POST", "/context/index", json=payload)
 
-    def list_tasks(
+    def get_tasks(
         self,
         *,
         repo_id: str,
-        review_dimension: str,
+        review_dimension: str | None = None,
     ) -> dict[str, Any]:
         """按固定评审维度查询可领取任务。"""
 
@@ -67,6 +67,16 @@ class ContextApiClient:
             "/context/tasks",
             params={"repo_id": repo_id, "review_dimension": review_dimension},
         )
+
+    def list_tasks(
+        self,
+        *,
+        repo_id: str,
+        review_dimension: str | None = None,
+    ) -> dict[str, Any]:
+        """Backward-compatible alias for GET /context/tasks."""
+
+        return self.get_tasks(repo_id=repo_id, review_dimension=review_dimension)
 
     def get_task_package(self, *, repo_id: str, task_id: str) -> dict[str, Any]:
         """获取完整任务包。"""

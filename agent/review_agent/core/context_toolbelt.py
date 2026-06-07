@@ -59,6 +59,7 @@ class ContextToolbelt:
         self.context_client = context_client
         self._tools: dict[str, Callable[..., Any]] = {
             "build_index": self.build_index,
+            "get_tasks": self.get_tasks,
             "list_tasks": self.list_tasks,
             "get_task_package": self.get_task_package,
             "get_task_graph_slice": self.get_task_graph_slice,
@@ -102,8 +103,11 @@ class ContextToolbelt:
     def build_index(self, *, repo_id: str, repo_path: str, db_path: str | None = None) -> dict[str, Any]:
         return self.context_client.build_index(repo_id=repo_id, repo_path=repo_path, db_path=db_path)
 
-    def list_tasks(self, *, repo_id: str, review_dimension: str) -> dict[str, Any]:
-        return self.context_client.list_tasks(repo_id=repo_id, review_dimension=review_dimension)
+    def get_tasks(self, *, repo_id: str, review_dimension: str | None = None) -> dict[str, Any]:
+        return self.context_client.get_tasks(repo_id=repo_id, review_dimension=review_dimension)
+
+    def list_tasks(self, *, repo_id: str, review_dimension: str | None = None) -> dict[str, Any]:
+        return self.get_tasks(repo_id=repo_id, review_dimension=review_dimension)
 
     def get_task_package(self, *, repo_id: str, task_id: str) -> dict[str, Any]:
         return self.context_client.get_task_package(repo_id=repo_id, task_id=task_id)

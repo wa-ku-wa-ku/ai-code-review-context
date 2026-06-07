@@ -85,6 +85,46 @@ class BasicReviewAgent:
             "feedback": feedback,
         }
 
+    def run_dimension(
+        self,
+        *,
+        repo_id: str,
+        review_dimension: str = "function_logic",
+        max_tasks: int | None = None,
+        graph_depth: int = 2,
+        related_max_depth: int = 1,
+        related_max_files: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Fetch tasks for a review dimension and process each via run_task."""
+
+        response = self.context_client.get_tasks(
+            repo_id=repo_id,
+            review_dimension=review_dimension,
+        )
+        tasks = [
+            task for task in response.get("tasks", [])
+            if isinstance(task, dict)
+            and task.get("review_dimension") == review_dimension
+        ]
+        if max_tasks is not None:
+            tasks = tasks[:max_tasks]
+
+        results: list[dict[str, Any]] = []
+        for task in tasks:
+            task_id = task.get("task_id")
+            if not task_id:
+                continue
+            results.append(
+                self.run_task(
+                    repo_id=repo_id,
+                    task_id=str(task_id),
+                    graph_depth=graph_depth,
+                    related_max_depth=related_max_depth,
+                    related_max_files=related_max_files,
+                )
+            )
+        return results
+
     def _submit_feedback(
         self,
         *,

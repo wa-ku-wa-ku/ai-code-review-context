@@ -170,6 +170,10 @@ def test_context_api_related_context_and_task_package_are_local(tmp_path: Path) 
 def test_context_api_lists_tasks_by_review_dimension(tmp_path: Path) -> None:
     client = _indexed_client(tmp_path, "api-context-dimension")
 
+    all_response = client.get(
+        "/context/tasks",
+        params={"repo_id": "api-context-dimension"},
+    )
     security_response = client.get(
         "/context/tasks",
         params={"repo_id": "api-context-dimension", "review_dimension": "security"},
@@ -178,11 +182,24 @@ def test_context_api_lists_tasks_by_review_dimension(tmp_path: Path) -> None:
         "/context/tasks",
         params={"repo_id": "api-context-dimension", "review_dimension": "function_logic"},
     )
+    empty_response = client.get(
+        "/context/tasks",
+        params={
+            "repo_id": "api-context-dimension",
+            "review_dimension": "requirement_consistency",
+        },
+    )
     invalid_response = client.get(
         "/context/tasks",
         params={"repo_id": "api-context-dimension", "review_dimension": "unknown"},
     )
     openapi = client.get("/openapi.json").json()
+
+    assert all_response.status_code == 200
+    all_tasks = all_response.json()
+    assert all_tasks["repo_id"] == "api-context-dimension"
+    assert all_tasks["review_dimension"] is None
+    assert all_tasks["tasks"]
 
     assert security_response.status_code == 200
     security = security_response.json()
@@ -195,6 +212,10 @@ def test_context_api_lists_tasks_by_review_dimension(tmp_path: Path) -> None:
     assert logic_response.status_code == 200
     logic = logic_response.json()
     assert all(task["review_dimension"] == "function_logic" for task in logic["tasks"])
+    assert empty_response.status_code == 200
+    empty = empty_response.json()
+    assert empty["review_dimension"] == "requirement_consistency"
+    assert empty["tasks"] == []
     assert invalid_response.status_code == 422
 
     enum_values = openapi["components"]["schemas"]["ReviewDimension"]["enum"]

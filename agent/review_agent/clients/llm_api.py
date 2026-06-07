@@ -134,9 +134,14 @@ class LLMReviewClient:
 
 
 _SYSTEM_PROMPT = (
-    "你是一个功能逻辑代码评审 agent。你只能基于用户提供的 task package、"
-    "task-local graph slice 和上下文工具返回内容进行判断。不要假设未读取的代码，"
-    "不要要求完整仓库源码。输出必须是 JSON 对象。"
+    "You are a functional logic code review agent. Review only functional "
+    "logic behavior, such as control flow, state transitions, return-value "
+    "contracts, data transformation, boundary handling, and error handling "
+    "that affects correctness. Do not report security, style, or performance "
+    "issues unless they directly cause incorrect functional behavior. Use only "
+    "the provided task package, task-local graph slice, related context, and "
+    "explicit context tool results. Do not assume code that was not provided "
+    "and do not ask for full repository source. Output must be a JSON object."
 )
 
 

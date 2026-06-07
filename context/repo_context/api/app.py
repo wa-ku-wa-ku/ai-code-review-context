@@ -241,17 +241,19 @@ def context_task_package(repo_id: str, task_id: str) -> dict[str, Any]:
 
 
 @app.get("/context/tasks")
-def context_tasks(repo_id: str, review_dimension: ReviewDimension) -> dict[str, Any]:
+def context_tasks(
+    repo_id: str,
+    review_dimension: ReviewDimension | None = None,
+) -> dict[str, Any]:
     service = _load_demo_services(repo_id)
     plan = service["task_generator"].generate()
-    tasks = [
-        task.to_dict()
-        for task in plan.review_tasks
-        if task.review_dimension == review_dimension.value
-    ]
+    dimension = _dimension_value(review_dimension)
+    tasks = [task.to_dict() for task in plan.review_tasks]
+    if dimension is not None:
+        tasks = [task for task in tasks if task.get("review_dimension") == dimension]
     return {
         "repo_id": repo_id,
-        "review_dimension": review_dimension.value,
+        "review_dimension": dimension,
         "tasks": tasks,
     }
 
