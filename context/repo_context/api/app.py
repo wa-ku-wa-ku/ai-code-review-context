@@ -70,7 +70,17 @@ class TaskFeedbackRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 def demo_page() -> str:
-    return _DEMO_HTML
+    return _DEBUG_CONSOLE_HTML
+
+
+@app.get("/demo", response_class=HTMLResponse)
+def demo_debug_console() -> str:
+    return _DEBUG_CONSOLE_HTML
+
+
+@app.get("/demo/{repo_id}/tasks/{task_id}", response_class=HTMLResponse)
+def demo_task_debug_console(repo_id: str, task_id: str) -> str:
+    return _DEBUG_CONSOLE_HTML
 
 
 @app.post("/demo/index")
@@ -717,6 +727,836 @@ GET /demo/{repo_id}/coverage</pre>
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     }
+  </script>
+</body>
+</html>
+"""
+
+_DEBUG_CONSOLE_HTML = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Context Debug Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #182230;
+      --muted: #667085;
+      --border: #d7dee8;
+      --soft: #eef3f7;
+      --brand: #2563eb;
+      --ok: #167647;
+      --warn: #b54708;
+      --danger: #b42318;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+    h2 { margin: 0; font-size: 15px; }
+    h3 { margin: 0 0 8px; font-size: 14px; }
+    label { display: block; margin: 10px 0 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    input, select, textarea {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #c7d0dd;
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+    }
+    textarea { min-height: 98px; resize: vertical; font-family: Consolas, "Courier New", monospace; }
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--brand);
+      color: #fff;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.secondary { background: var(--soft); color: var(--text); border: 1px solid #c7d0dd; }
+    button.ghost { background: transparent; color: var(--brand); border: 1px solid var(--border); }
+    button.small { padding: 6px 8px; font-size: 12px; }
+    .status {
+      max-width: 560px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 330px minmax(520px, 1fr) 420px;
+      gap: 12px;
+      padding: 12px;
+      height: calc(100vh - 72px);
+    }
+    .panel {
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-head {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+    .panel-body { padding: 12px; overflow: auto; min-height: 0; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    .stack { display: grid; gap: 10px; }
+    .muted { color: var(--muted); }
+    .small-text { font-size: 12px; line-height: 1.45; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: #344054;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pill.high { color: var(--danger); background: #fff1f0; }
+    .pill.medium { color: var(--warn); background: #fff7e6; }
+    .pill.low { color: var(--ok); background: #ecfdf3; }
+    .task-card {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 10px;
+      cursor: pointer;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+    }
+    .task-card:hover, .task-card.active { border-color: var(--brand); background: #f5f8ff; }
+    .task-title { font-weight: 800; line-height: 1.3; word-break: break-word; }
+    .task-meta { display: flex; flex-wrap: wrap; gap: 5px; }
+    .kv {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 7px 10px;
+      font-size: 13px;
+    }
+    .kv div:nth-child(odd) { color: var(--muted); font-weight: 700; }
+    .box {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #fff;
+      padding: 10px;
+      min-width: 0;
+    }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    .tab { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .tab.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom: 1px solid var(--border); padding: 7px 6px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); background: #fbfcfe; font-weight: 800; position: sticky; top: 0; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: #f5f8ff; }
+    pre {
+      margin: 0;
+      padding: 10px;
+      overflow: auto;
+      max-height: 420px;
+      border-radius: 7px;
+      background: #101828;
+      color: #e6edf7;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .code { white-space: pre; font-family: Consolas, "Courier New", monospace; }
+    .empty {
+      padding: 22px;
+      border: 1px dashed #b7c1cf;
+      border-radius: 7px;
+      color: var(--muted);
+      text-align: center;
+      background: #fbfcfe;
+    }
+    .log-item {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 0;
+      font-size: 12px;
+      display: grid;
+      gap: 4px;
+    }
+    .ok { color: var(--ok); font-weight: 800; }
+    .bad { color: var(--danger); font-weight: 800; }
+    .nowrap { white-space: nowrap; }
+    .wrap { word-break: break-word; }
+    @media (max-width: 1180px) {
+      header { height: auto; align-items: flex-start; flex-direction: column; }
+      main { grid-template-columns: 1fr; height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Agent Context Debug Console</h1>
+      <div class="muted small-text">调试展示层：只调用接口、展示响应、记录日志；priority、risk_score、relation_to_target、reason 均以后端返回为准。</div>
+    </div>
+    <div id="status" class="status">等待构建索引或输入已有 repo_id。</div>
+  </header>
+
+  <main>
+    <aside class="panel">
+      <div class="panel-head"><h2>Repository & Tasks</h2></div>
+      <div class="panel-body stack">
+        <div class="box">
+          <label for="repoId">repo_id</label>
+          <input id="repoId" value="sample-repo" />
+          <label for="repoPath">repo_path</label>
+          <input id="repoPath" value="tests/fixtures/sample_repo" />
+          <label for="dbPath">db_path</label>
+          <input id="dbPath" value=".demo_data/sample-repo.db" />
+          <div class="row" style="margin-top:10px">
+            <button onclick="buildIndex()">POST /context/index</button>
+            <button class="secondary" onclick="loadTasks()">Load Tasks</button>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="row">
+            <div>
+              <label for="dimensionFilter">review_dimension</label>
+              <select id="dimensionFilter" onchange="loadTasks()">
+                <option value="function_logic">function_logic</option>
+                <option value="security">security</option>
+                <option value="coding_style">coding_style</option>
+                <option value="requirement_consistency">requirement_consistency</option>
+              </select>
+            </div>
+            <div>
+              <label for="taskTypeFilter">task_type</label>
+              <select id="taskTypeFilter" onchange="renderTasks()">
+                <option value="">all</option>
+                <option value="entrypoint_review">entrypoint_review</option>
+                <option value="config_review">config_review</option>
+                <option value="module_review">module_review</option>
+                <option value="file_review">file_review</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="repoSummary" class="box small-text muted">暂无仓库摘要。</div>
+        <div class="row"><span id="taskCount" class="pill">0 tasks</span><button class="ghost small" onclick="refreshUsage()">Refresh Usage</button></div>
+        <div id="taskList" class="stack"><div class="empty">暂无任务。</div></div>
+      </div>
+    </aside>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 id="taskTitle">Task Debug Area</h2>
+        <div class="row" style="flex:0 0 auto">
+          <button class="ghost small" onclick="refreshSelectedTask()">Reload Task</button>
+          <button class="secondary small" onclick="showRaw(state.selectedPackage || {})">Raw Task</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <button id="tabPackage" class="tab active" onclick="switchCenterTab('package')">Package</button>
+        <button id="tabGraph" class="tab" onclick="switchCenterTab('graph')">Graph Slice</button>
+        <button id="tabNode" class="tab" onclick="switchCenterTab('node')">Node Detail</button>
+        <button id="tabSnippet" class="tab" onclick="switchCenterTab('snippet')">File Snippet</button>
+        <button id="tabTool" class="tab" onclick="switchCenterTab('tool')">Tool Debugger</button>
+      </div>
+      <div id="centerPane" class="panel-body stack"></div>
+    </section>
+
+    <aside class="panel">
+      <div class="panel-head"><h2>Raw JSON / Logs / Usage</h2></div>
+      <div class="tabs">
+        <button id="tabRightRaw" class="tab active" onclick="switchRightTab('raw')">Raw JSON</button>
+        <button id="tabRightLogs" class="tab" onclick="switchRightTab('logs')">API Logs</button>
+        <button id="tabRightUsage" class="tab" onclick="switchRightTab('usage')">Usage</button>
+      </div>
+      <div id="rightPane" class="panel-body"></div>
+    </aside>
+  </main>
+
+  <script>
+    const state = {
+      repoId: "",
+      tasks: [],
+      selectedTaskId: "",
+      selectedPackage: null,
+      graphSlice: null,
+      nodeDetail: null,
+      fileSnippet: null,
+      relatedContext: null,
+      usage: null,
+      raw: {},
+      logs: []
+    };
+
+    const apiClient = {
+      buildIndex(body) {
+        return requestJson("POST", "/context/index", { body });
+      },
+      listTasks(repoId, reviewDimension) {
+        return requestJson("GET", `/context/tasks?repo_id=${enc(repoId)}&review_dimension=${enc(reviewDimension)}`);
+      },
+      getTaskPackage(taskId) {
+        return requestJson("GET", `/context/task-package/${enc(taskId)}?repo_id=${enc(state.repoId)}`);
+      },
+      getTaskGraphSlice(taskId, depth = 2) {
+        return requestJson("GET", `/context/tasks/${enc(taskId)}/graph-slice?repo_id=${enc(state.repoId)}&depth=${enc(depth)}`);
+      },
+      getNodeDetail({ node_id, symbol_name, task_id, review_dimension }) {
+        const qs = query({ repo_id: state.repoId, node_id, symbol_name, task_id, review_dimension });
+        return requestJson("GET", `/context/node-detail?${qs}`);
+      },
+      getFileSnippet({ file_path, start_line, end_line, task_id, review_dimension }) {
+        const qs = query({ repo_id: state.repoId, file_path, start_line, end_line, task_id, review_dimension });
+        return requestJson("GET", `/context/file-snippet?${qs}`);
+      },
+      getCallers({ node_id, symbol_name, depth, task_id, review_dimension }) {
+        const qs = query({ repo_id: state.repoId, node_id, symbol_name, depth, task_id, review_dimension });
+        return requestJson("GET", `/context/callers?${qs}`);
+      },
+      getCallees({ node_id, symbol_name, depth, task_id, review_dimension }) {
+        const qs = query({ repo_id: state.repoId, node_id, symbol_name, depth, task_id, review_dimension });
+        return requestJson("GET", `/context/callees?${qs}`);
+      },
+      getRelatedContext(body) {
+        return requestJson("POST", "/context/related-context", { body: { repo_id: state.repoId, ...body } });
+      },
+      getUsage(repoId = state.repoId) {
+        return requestJson("GET", `/demo/${enc(repoId)}/coverage`);
+      }
+    };
+
+    function enc(value) {
+      return encodeURIComponent(value == null ? "" : String(value));
+    }
+
+    function query(params) {
+      return Object.entries(params)
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([key, value]) => `${enc(key)}=${enc(value)}`)
+        .join("&");
+    }
+
+    async function requestJson(method, url, options = {}) {
+      const started = performance.now();
+      const init = { method, headers: {} };
+      if (options.body !== undefined) {
+        init.headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(options.body);
+      }
+      let status = 0;
+      let rawText = "";
+      try {
+        const response = await fetch(url, init);
+        status = response.status;
+        rawText = await response.text();
+        const elapsedMs = Math.round(performance.now() - started);
+        let payload = parseMaybeJson(rawText);
+        addLog({ method, url, params: options.body || {}, status, elapsedMs, ok: response.ok, response: payload });
+        if (!response.ok) {
+          showRaw({ error: payload, method, url, status });
+          throw new Error(typeof payload === "string" ? payload : JSON.stringify(payload));
+        }
+        showRaw(payload);
+        return payload;
+      } catch (error) {
+        if (!status) {
+          addLog({ method, url, params: options.body || {}, status: "-", elapsedMs: Math.round(performance.now() - started), ok: false, response: String(error) });
+          showRaw({ error: String(error), method, url });
+        }
+        throw error;
+      }
+    }
+
+    function parseMaybeJson(text) {
+      try { return JSON.parse(text); } catch { return text; }
+    }
+
+    function addLog(log) {
+      state.logs.unshift({ at: new Date().toLocaleTimeString(), ...log });
+      state.logs = state.logs.slice(0, 80);
+      if (activeRightTab() === "logs") renderRightPane();
+    }
+
+    async function buildIndex() {
+      const repoId = valueOf("repoId") || "sample-repo";
+      state.repoId = repoId;
+      setStatus("Building index...");
+      const body = {
+        repo_id: repoId,
+        repo_path: valueOf("repoPath") || "tests/fixtures/sample_repo",
+        db_path: valueOf("dbPath") || `.demo_data/${repoId}.db`
+      };
+      try {
+        const data = await apiClient.buildIndex(body);
+        state.tasks = Array.isArray(data.review_tasks) ? data.review_tasks : [];
+        renderRepoSummary(data.repo_summary || {});
+        renderTasks();
+        renderTaskEmpty("索引已构建。请选择左侧任务查看 task package 和 graph slice。");
+        state.usage = data.usage_coverage_report || null;
+        renderRightPane();
+        setStatus(`Index ready: ${state.tasks.length} tasks.`);
+      } catch (error) {
+        setStatus(`Index failed: ${String(error)}`);
+      }
+    }
+
+    async function loadTasks() {
+      state.repoId = valueOf("repoId") || state.repoId || "sample-repo";
+      const dimension = valueOf("dimensionFilter");
+      setStatus(`Loading tasks for ${dimension}...`);
+      try {
+        const data = await apiClient.listTasks(state.repoId, dimension);
+        state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        renderTasks();
+        setStatus(`Loaded ${state.tasks.length} tasks.`);
+      } catch (error) {
+        setStatus(`Load tasks failed: ${String(error)}`);
+      }
+    }
+
+    async function selectTask(taskId) {
+      state.selectedTaskId = taskId;
+      renderTasks();
+      setStatus(`Loading task ${taskId}...`);
+      try {
+        const [pkg, graph] = await Promise.all([
+          apiClient.getTaskPackage(taskId),
+          apiClient.getTaskGraphSlice(taskId, 2)
+        ]);
+        state.selectedPackage = pkg;
+        state.graphSlice = graph;
+        state.nodeDetail = null;
+        state.fileSnippet = null;
+        renderPackage();
+        await refreshUsage(false);
+        setStatus(`Task loaded: ${taskId}`);
+      } catch (error) {
+        renderTaskEmpty(`任务加载失败：${String(error)}`);
+        setStatus(`Task load failed: ${String(error)}`);
+      }
+    }
+
+    function refreshSelectedTask() {
+      if (state.selectedTaskId) selectTask(state.selectedTaskId);
+    }
+
+    async function refreshUsage(showStatus = true) {
+      state.repoId = valueOf("repoId") || state.repoId;
+      if (!state.repoId) return;
+      try {
+        const data = await apiClient.getUsage(state.repoId);
+        state.usage = data;
+        if (showStatus) setStatus("Usage refreshed.");
+        if (activeRightTab() === "usage") renderRightPane();
+      } catch (error) {
+        if (showStatus) setStatus(`Usage refresh failed: ${String(error)}`);
+      }
+    }
+
+    async function loadNodeDetail(node) {
+      const args = {
+        node_id: node.id || node.node_id || "",
+        symbol_name: node.name || "",
+        task_id: state.selectedTaskId,
+        review_dimension: selectedDimension()
+      };
+      try {
+        state.nodeDetail = await apiClient.getNodeDetail(args);
+        switchCenterTab("node");
+        await refreshUsage(false);
+      } catch (error) {
+        setStatus(`Node detail failed: ${String(error)}`);
+      }
+    }
+
+    async function quickCall(tool) {
+      const node = state.nodeDetail || {};
+      const pkg = state.selectedPackage || {};
+      const target = pkg.target || {};
+      const symbol = node.name || node.symbol_name || (Array.isArray(target.symbols) ? target.symbols[0] : "");
+      const common = {
+        node_id: node.node_id || node.id || "",
+        symbol_name: symbol || "",
+        task_id: state.selectedTaskId,
+        review_dimension: selectedDimension(),
+        depth: 1
+      };
+      try {
+        let data;
+        if (tool === "callers") data = await apiClient.getCallers(common);
+        if (tool === "callees") data = await apiClient.getCallees(common);
+        if (tool === "related") data = await apiClient.getRelatedContext({
+          task_id: state.selectedTaskId,
+          target_file: target.file_path || "",
+          review_dimension: selectedDimension(),
+          tags: pkg.tags || [],
+          max_depth: 1,
+          max_files: 3
+        });
+        if (tool === "snippet") data = await apiClient.getFileSnippet({
+          file_path: node.file_path || target.file_path || "",
+          start_line: node.start_line || 1,
+          end_line: node.end_line || 80,
+          task_id: state.selectedTaskId,
+          review_dimension: selectedDimension()
+        });
+        if (tool === "snippet") state.fileSnippet = data;
+        switchCenterTab(tool === "snippet" ? "snippet" : "node");
+        showRaw(data || {});
+        await refreshUsage(false);
+      } catch (error) {
+        setStatus(`${tool} failed: ${String(error)}`);
+      }
+    }
+
+    async function runToolDebugger() {
+      const tool = valueOf("toolName");
+      let args = {};
+      try {
+        args = JSON.parse(valueOf("toolArgs") || "{}");
+      } catch (error) {
+        showRaw({ error: "Tool args must be JSON", detail: String(error) });
+        return;
+      }
+      try {
+        let data;
+        if (tool === "get_task_package") data = await apiClient.getTaskPackage(args.task_id || state.selectedTaskId);
+        if (tool === "get_task_graph_slice") data = await apiClient.getTaskGraphSlice(args.task_id || state.selectedTaskId, args.depth || 2);
+        if (tool === "get_node_detail") data = await apiClient.getNodeDetail({ task_id: state.selectedTaskId, review_dimension: selectedDimension(), ...args });
+        if (tool === "get_file_snippet") data = await apiClient.getFileSnippet({ task_id: state.selectedTaskId, review_dimension: selectedDimension(), ...args });
+        if (tool === "get_callers") data = await apiClient.getCallers({ task_id: state.selectedTaskId, review_dimension: selectedDimension(), ...args });
+        if (tool === "get_callees") data = await apiClient.getCallees({ task_id: state.selectedTaskId, review_dimension: selectedDimension(), ...args });
+        if (tool === "get_related_context") data = await apiClient.getRelatedContext({ task_id: state.selectedTaskId, review_dimension: selectedDimension(), ...args });
+        if (tool === "get_usage") data = await apiClient.getUsage(args.repo_id || state.repoId);
+        showRaw(data || {});
+      } catch (error) {
+        setStatus(`Tool debugger failed: ${String(error)}`);
+      }
+    }
+
+    function renderTasks() {
+      const list = document.getElementById("taskList");
+      const typeFilter = valueOf("taskTypeFilter");
+      const tasks = state.tasks.filter(task => !typeFilter || task.task_type === typeFilter);
+      document.getElementById("taskCount").textContent = `${tasks.length} tasks`;
+      if (!tasks.length) {
+        list.innerHTML = `<div class="empty">没有匹配任务。</div>`;
+        return;
+      }
+      list.innerHTML = tasks.map(task => `
+        <div class="task-card ${task.task_id === state.selectedTaskId ? "active" : ""}" onclick="selectTask('${escapeAttr(task.task_id)}')">
+          <div class="task-title">${html(task.task_type)} · ${html(readTargetLabel(task.target || task.legacy_target))}</div>
+          <div class="task-meta">
+            <span class="pill ${html(task.priority)}">${html(task.priority || "-")}</span>
+            <span class="pill">${html(task.review_dimension || "-")}</span>
+          </div>
+          <div class="muted small-text wrap">${html(task.task_id || "-")}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderRepoSummary(summary) {
+      document.getElementById("repoSummary").innerHTML = `
+        <div class="kv">
+          <div>repo_id</div><div>${html(summary.repo_id || state.repoId || "-")}</div>
+          <div>framework</div><div>${html(summary.framework || "-")}</div>
+          <div>python_files</div><div>${html(summary.python_files ?? "-")}</div>
+          <div>entrypoints</div><div>${html((summary.entrypoints || []).length)}</div>
+        </div>`;
+    }
+
+    function renderPackage() {
+      switchCenterTab("package", false);
+      const pkg = state.selectedPackage || {};
+      const target = pkg.target || {};
+      document.getElementById("taskTitle").textContent = `Task: ${pkg.task_id || state.selectedTaskId || "-"}`;
+      document.getElementById("centerPane").innerHTML = `
+        <div class="grid-2">
+          <div class="box">
+            <h3>Task Package</h3>
+            <div class="kv">
+              <div>task_id</div><div>${html(pkg.task_id || "-")}</div>
+              <div>task_type</div><div>${html(pkg.task_type || "-")}</div>
+              <div>dimension</div><div>${html(pkg.review_dimension || "-")}</div>
+              <div>priority</div><div>${html(pkg.priority || "-")}</div>
+              <div>target file</div><div>${html(target.file_path || "-")}</div>
+              <div>symbols</div><div>${html((target.symbols || []).join(", ") || "-")}</div>
+            </div>
+          </div>
+          <div class="box">
+            <h3>Context Policy / Tools</h3>
+            <div class="small-text muted">前端只展示后端返回策略，不自行判断范围。</div>
+            <pre>${jsonText({ context_policy: pkg.context_policy || {}, available_tools: pkg.available_tools || [] })}</pre>
+          </div>
+        </div>
+        <div class="box">
+          <h3>initial_context</h3>
+          <pre>${jsonText(pkg.initial_context || {})}</pre>
+        </div>
+        <div class="box">
+          <h3>Graph Slice Preview</h3>
+          ${renderGraphTables(state.graphSlice || {})}
+        </div>`;
+    }
+
+    function renderGraph() {
+      document.getElementById("centerPane").innerHTML = `
+        <div class="box">
+          <div class="row" style="margin-bottom:8px">
+            <h3>task-local graph slice</h3>
+            <button class="secondary small" onclick="reloadGraphDepth()">Reload depth</button>
+            <input id="graphDepth" value="2" style="max-width:80px" />
+          </div>
+          ${renderGraphTables(state.graphSlice || {})}
+        </div>`;
+    }
+
+    async function reloadGraphDepth() {
+      if (!state.selectedTaskId) return;
+      state.graphSlice = await apiClient.getTaskGraphSlice(state.selectedTaskId, Number(valueOf("graphDepth") || 2));
+      renderGraph();
+    }
+
+    function renderGraphTables(graph) {
+      const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph.edges) ? graph.edges : [];
+      const boundary = Array.isArray(graph.boundary_nodes) ? graph.boundary_nodes : [];
+      return `
+        <h3>nodes</h3>
+        ${table(["id","name","type","file_path","relation_to_target","priority","risk_score","reason"], nodes, row => rowClick(row), true)}
+        <h3 style="margin-top:12px">edges</h3>
+        ${table(["source","target","type"], edges)}
+        <h3 style="margin-top:12px">boundary_nodes</h3>
+        ${table(["id","name","file_path","reason","risk_score"], boundary, row => rowClick(row), true)}
+      `;
+    }
+
+    function renderNode() {
+      const node = state.nodeDetail || {};
+      document.getElementById("centerPane").innerHTML = `
+        <div class="box">
+          <h3>Node Detail</h3>
+          <div class="kv">
+            <div>node_id</div><div>${html(node.node_id || node.id || "-")}</div>
+            <div>name</div><div>${html(node.name || node.symbol_name || "-")}</div>
+            <div>type</div><div>${html(node.type || node.node_type || "-")}</div>
+            <div>file_path</div><div>${html(node.file_path || "-")}</div>
+            <div>line</div><div>${html([node.start_line, node.end_line].filter(v => v != null).join("-") || "-")}</div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="secondary small" onclick="quickCall('callers')">get_callers</button>
+            <button class="secondary small" onclick="quickCall('callees')">get_callees</button>
+            <button class="secondary small" onclick="quickCall('related')">get_related_context</button>
+            <button class="secondary small" onclick="quickCall('snippet')">get_file_snippet</button>
+          </div>
+        </div>
+        <div class="box"><h3>Source</h3><pre>${html(node.source || node.code || "-")}</pre></div>
+        <div class="box"><h3>Raw Node JSON</h3><pre>${jsonText(node)}</pre></div>`;
+    }
+
+    function renderSnippet() {
+      const snippet = state.fileSnippet || {};
+      document.getElementById("centerPane").innerHTML = `
+        <div class="box">
+          <h3>File Snippet</h3>
+          <div class="kv">
+            <div>file_path</div><div>${html(snippet.file_path || "-")}</div>
+            <div>lines</div><div>${html([snippet.start_line, snippet.end_line].filter(v => v != null).join("-") || "-")}</div>
+          </div>
+        </div>
+        <div class="box"><pre>${html(snippet.content || snippet.source || "-")}</pre></div>`;
+    }
+
+    function renderToolDebugger() {
+      const defaultArgs = {
+        task_id: state.selectedTaskId || "",
+        node_id: "",
+        symbol_name: "",
+        file_path: ((state.selectedPackage || {}).target || {}).file_path || "",
+        start_line: 1,
+        end_line: 80,
+        depth: 1
+      };
+      document.getElementById("centerPane").innerHTML = `
+        <div class="box">
+          <h3>Tool Debugger</h3>
+          <label for="toolName">tool</label>
+          <select id="toolName">
+            <option value="get_task_package">get_task_package</option>
+            <option value="get_task_graph_slice">get_task_graph_slice</option>
+            <option value="get_node_detail">get_node_detail</option>
+            <option value="get_file_snippet">get_file_snippet</option>
+            <option value="get_callers">get_callers</option>
+            <option value="get_callees">get_callees</option>
+            <option value="get_related_context">get_related_context</option>
+            <option value="get_usage">get_usage</option>
+          </select>
+          <label for="toolArgs">arguments JSON</label>
+          <textarea id="toolArgs">${jsonText(defaultArgs)}</textarea>
+          <button onclick="runToolDebugger()">Run</button>
+        </div>`;
+    }
+
+    function renderRightPane() {
+      const tab = activeRightTab();
+      if (tab === "raw") document.getElementById("rightPane").innerHTML = `<pre>${jsonText(state.raw)}</pre>`;
+      if (tab === "logs") document.getElementById("rightPane").innerHTML = state.logs.length
+        ? state.logs.map(log => `<div class="log-item">
+            <div><span class="${log.ok ? "ok" : "bad"}">${log.ok ? "OK" : "ERR"}</span> <strong>${html(log.method)}</strong> ${html(log.url)}</div>
+            <div class="muted">${html(log.status)} · ${html(log.elapsedMs)}ms · ${html(log.at)}</div>
+            <pre>${jsonText({ params: log.params, response: log.response })}</pre>
+          </div>`).join("")
+        : `<div class="empty">暂无 API 调用日志。</div>`;
+      if (tab === "usage") document.getElementById("rightPane").innerHTML = `<pre>${jsonText(state.usage || {})}</pre>`;
+    }
+
+    function renderTaskEmpty(message) {
+      document.getElementById("centerPane").innerHTML = `<div class="empty">${html(message)}</div>`;
+    }
+
+    function switchCenterTab(tab, render = true) {
+      for (const name of ["package","graph","node","snippet","tool"]) {
+        document.getElementById(`tab${cap(name)}`).classList.toggle("active", name === tab);
+      }
+      if (!render) return;
+      if (tab === "package") renderPackage();
+      if (tab === "graph") renderGraph();
+      if (tab === "node") renderNode();
+      if (tab === "snippet") renderSnippet();
+      if (tab === "tool") renderToolDebugger();
+    }
+
+    function switchRightTab(tab) {
+      for (const name of ["raw","logs","usage"]) {
+        document.getElementById(`tabRight${cap(name)}`).classList.toggle("active", name === tab);
+      }
+      renderRightPane();
+    }
+
+    function activeRightTab() {
+      if (document.getElementById("tabRightLogs").classList.contains("active")) return "logs";
+      if (document.getElementById("tabRightUsage").classList.contains("active")) return "usage";
+      return "raw";
+    }
+
+    function showRaw(data) {
+      state.raw = data;
+      if (activeRightTab() === "raw") renderRightPane();
+    }
+
+    function table(columns, rows, onClick, clickable = false) {
+      if (!rows.length) return `<div class="empty">-</div>`;
+      return `<table><thead><tr>${columns.map(col => `<th>${html(col)}</th>`).join("")}</tr></thead><tbody>` +
+        rows.map((row, index) => `<tr class="${clickable ? "clickable" : ""}" ${clickable ? `onclick="${onClick(row, index)}"` : ""}>` +
+          columns.map(col => `<td>${html(read(row, col))}</td>`).join("") +
+        `</tr>`).join("") + `</tbody></table>`;
+    }
+
+    function rowClick(row) {
+      const encoded = encodeURIComponent(JSON.stringify(row));
+      return `loadNodeDetail(JSON.parse(decodeURIComponent('${encoded}')))`;
+    }
+
+    function read(row, key) {
+      const value = row && row[key];
+      if (Array.isArray(value)) return value.join(", ");
+      if (value && typeof value === "object") return JSON.stringify(value);
+      return value ?? "-";
+    }
+
+    function readTargetLabel(target) {
+      if (!target) return "-";
+      if (typeof target === "string") return target;
+      return target.file_path || (target.symbols || []).join(", ") || target.type || "-";
+    }
+
+    function selectedDimension() {
+      return (state.selectedPackage || {}).review_dimension || valueOf("dimensionFilter") || "function_logic";
+    }
+
+    function valueOf(id) {
+      const el = document.getElementById(id);
+      return el ? el.value.trim() : "";
+    }
+
+    function html(value) {
+      return String(value ?? "-")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function escapeAttr(value) {
+      return html(value).replaceAll("`", "&#096;");
+    }
+
+    function jsonText(value) {
+      return html(JSON.stringify(value ?? {}, null, 2));
+    }
+
+    function cap(value) {
+      return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    function setStatus(text) {
+      document.getElementById("status").textContent = text;
+    }
+
+    function initFromPath() {
+      const match = location.pathname.match(/^[/]demo[/]([^/]+)[/]tasks[/]([^/]+)$/);
+      if (match) {
+        document.getElementById("repoId").value = decodeURIComponent(match[1]);
+        state.repoId = decodeURIComponent(match[1]);
+        state.selectedTaskId = decodeURIComponent(match[2]);
+        setStatus(`Task page loaded. Click Reload Task after this repo_id has been indexed in this process.`);
+      }
+      renderTaskEmpty("构建索引或加载任务后，调试链路会显示在这里。");
+      renderRightPane();
+    }
+
+    initFromPath();
   </script>
 </body>
 </html>

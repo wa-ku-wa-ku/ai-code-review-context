@@ -15,8 +15,29 @@ def test_demo_page_loads() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "AI 仓库级代码评审上下文台" in response.text
-    assert "评审任务" in response.text
+    assert "Agent Context Debug Console" in response.text
+    assert "Tool Debugger" in response.text
+    assert "apiClient" in response.text
+
+
+def test_demo_console_route_loads() -> None:
+    client = TestClient(app)
+
+    response = client.get("/demo")
+
+    assert response.status_code == 200
+    assert "Agent Context Debug Console" in response.text
+    assert "API Logs" in response.text
+
+
+def test_demo_task_detail_page_loads() -> None:
+    client = TestClient(app)
+
+    response = client.get("/demo/sample-repo/tasks/task_route_post_login")
+
+    assert response.status_code == 200
+    assert "Agent Context Debug Console" in response.text
+    assert "Reload Task" in response.text
 
 
 def test_demo_index_returns_outputs(tmp_path: Path) -> None:

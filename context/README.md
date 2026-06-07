@@ -491,3 +491,24 @@ python -m compileall -q context/repo_context
 - initial context 摘要。
 - graph slice 节点数和边数。
 - “继续扩展上下文”的操作入口。
+## Agent Context Debug Console
+
+FastAPI 应用内置轻量调试台，入口为：
+
+```text
+GET /
+GET /demo
+GET /demo/{repo_id}/tasks/{task_id}
+```
+
+调试台用于开发者检查上下文接口调用链，不承载后端业务逻辑：
+
+- 左侧填写 `repo_id`、`repo_path`、`db_path`，调用 `POST /context/index` 构建索引。
+- 左侧任务列表支持按 `review_dimension` 和 `task_type` 过滤。
+- 点击任务后会自动调用 `GET /context/task-package/{task_id}` 和 `GET /context/tasks/{task_id}/graph-slice?depth=2`。
+- graph slice 使用表格展示 `nodes`、`edges`、`boundary_nodes`，字段缺失时显示 `-`。
+- 点击节点会调用 `GET /context/node-detail`，并在节点详情附近提供 `get_callers`、`get_callees`、`get_related_context`、`get_file_snippet` 快捷按钮。
+- Tool Debugger 面板支持手动输入 JSON 参数调试 task package、graph slice、node detail、file snippet、callers、callees、related context 和 usage。
+- 右侧面板展示 Raw JSON、API Logs 和 Usage。API Logs 会记录 method、URL、参数、状态码、耗时和成功/失败状态。
+
+前端只负责调用接口、展示返回结果、记录日志和辅助调试；`priority`、`risk_score`、`relation_to_target`、`reason`、task-local 范围、截断和 boundary nodes 均以后端返回为准。
