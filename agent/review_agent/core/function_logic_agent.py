@@ -134,6 +134,11 @@ class FunctionLogicAgent:
             "review_result": {
                 "status": result.status,
                 "context_sufficient": result.context_sufficient,
+                "summary": result.summary,
+                "findings": result.findings,
+                "checked_context": result.checked_context,
+                "remaining_questions": result.remaining_questions,
+                "parser_warnings": result.parser_warnings,
                 "message": result.message,
                 "requested_context": result.requested_context,
                 "downstream_result_ref": result.downstream_result_ref,
@@ -170,16 +175,10 @@ class FunctionLogicAgent:
         )
         trace.append(_event("tool_result", {"tool_name": "get_task_graph_slice", "result": graph_slice}))
 
-        related_context = self.toolbelt.get_related_context(
-            repo_id=repo_id,
-            task_id=task_id,
-            target_file=runtime.target_file,
-            review_dimension=runtime.review_dimension,
-            tags=runtime.tags,
-            max_depth=related_max_depth,
-            max_files=related_max_files,
-        )
-        trace.append(_event("tool_result", {"tool_name": "get_related_context", "result": related_context}))
+        related_context: dict[str, Any] = {
+            "preloaded": False,
+            "reason": "FunctionLogicAgent trace mode lets the model request context tools on demand.",
+        }
 
         allowed_tools = [
             "get_related_context",
@@ -226,7 +225,15 @@ class FunctionLogicAgent:
                     },
                 )
             )
-            tool_call = self.toolbelt.call_tool(tool_name, **normalized_args)
+            missing_argument = _missing_required_tool_argument(tool_name, normalized_args)
+            if missing_argument:
+                tool_call = ContextToolCall(
+                    name=tool_name,
+                    arguments=normalized_args,
+                    error=f"missing required tool argument: {missing_argument}",
+                )
+            else:
+                tool_call = self.toolbelt.call_tool(tool_name, **normalized_args)
             trace.append(_event("tool_result", asdict(tool_call)))
 
         if final_decision is None:
@@ -247,6 +254,11 @@ class FunctionLogicAgent:
                 {
                     "status": result.status,
                     "context_sufficient": result.context_sufficient,
+                    "summary": result.summary,
+                    "findings": result.findings,
+                    "checked_context": result.checked_context,
+                    "remaining_questions": result.remaining_questions,
+                    "parser_warnings": result.parser_warnings,
                     "message": result.message,
                     "requested_context": result.requested_context,
                     "downstream_result_ref": result.downstream_result_ref,
@@ -268,6 +280,11 @@ class FunctionLogicAgent:
             "final_result": {
                 "status": result.status,
                 "context_sufficient": result.context_sufficient,
+                "summary": result.summary,
+                "findings": result.findings,
+                "checked_context": result.checked_context,
+                "remaining_questions": result.remaining_questions,
+                "parser_warnings": result.parser_warnings,
                 "message": result.message,
                 "requested_context": result.requested_context,
                 "downstream_result_ref": result.downstream_result_ref,
@@ -397,29 +414,110 @@ def _normalize_tool_args(
     if tool_name == "get_related_context":
         args.setdefault("target_file", runtime.target_file)
         args.setdefault("tags", runtime.tags)
-        args.setdefault("max_depth", 1)
-        args.setdefault("max_files", 3)
+        args["max_depth"] = _positive_int(args.get("max_depth"), default=1, maximum=3)
+        args["max_files"] = _positive_int(args.get("max_files"), default=3, maximum=10)
     if tool_name == "get_file_snippet":
         args.setdefault("file_path", runtime.target_file or "")
-        args.setdefault("start_line", 1)
-        args.setdefault("end_line", 80)
+        args["start_line"] = _positive_int(args.get("start_line"), default=1, maximum=100000)
+        args["end_line"] = _positive_int(args.get("end_line"), default=80, maximum=100000)
+        if args["end_line"] < args["start_line"]:
+            args["end_line"] = args["start_line"]
+    if tool_name in {"get_node_detail", "get_callees", "get_callers"}:
+        if not args.get("node_id") and not args.get("symbol_name") and runtime.symbols:
+            args["symbol_name"] = runtime.symbols[0]
     if tool_name in {"get_callees", "get_callers"}:
-        args.setdefault("depth", 1)
+        args["depth"] = _positive_int(args.get("depth"), default=1, maximum=3)
     return args
+
+
+def _positive_int(value: Any, *, default: int, maximum: int) -> int:
+    """把模型给出的数字参数规整成上下文接口可接受的正整数。"""
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if parsed < 1:
+        parsed = default
+    return min(parsed, maximum)
+
+
+def _missing_required_tool_argument(tool_name: str, args: dict[str, Any]) -> str | None:
+    """在真正调用 context API 前做一层轻量参数闸门。
+
+    这层不是业务判断，只是防止模型在缺少目标文件或目标符号时把无效请求打到后端，
+    导致整个 agent trace 变成 400/500。缺参会作为 tool_result.error 回到 trace，
+    让模型下一轮继续选择更合适的上下文工具。
+    """
+
+    if tool_name == "get_related_context" and not args.get("target_file"):
+        return "target_file"
+    if tool_name == "get_file_snippet" and not args.get("file_path"):
+        return "file_path"
+    if tool_name in {"get_node_detail", "get_callees", "get_callers"}:
+        if not args.get("node_id") and not args.get("symbol_name"):
+            return "node_id or symbol_name"
+    return None
 
 
 def _decision_to_review_result(decision: dict[str, Any]) -> ReviewResult:
     """把 AI final decision 转成 task-feedback 使用的 ReviewResult。"""
 
+    normalized = _normalize_final_decision(decision)
+    raw_response = decision.get("raw_response") if isinstance(decision.get("raw_response"), dict) else {}
+    return ReviewResult(raw_response=raw_response, **normalized)
+
+
+def _normalize_final_decision(decision: dict[str, Any]) -> dict[str, Any]:
+    """校验 AI 最终输出，避免把空泛回复误判为已完成。"""
+
     status = str(decision.get("status") or "completed")
+    summary = str(decision.get("summary") or "").strip()
+    findings = decision.get("findings") or []
+    if not isinstance(findings, list):
+        findings = []
+    checked_context = decision.get("checked_context") or []
+    if not isinstance(checked_context, list):
+        checked_context = []
+    checked_context = [str(item) for item in checked_context if item]
+    remaining_questions = decision.get("remaining_questions") or []
+    if not isinstance(remaining_questions, list):
+        remaining_questions = []
+    remaining_questions = [str(item) for item in remaining_questions if item]
+    parser_warnings = decision.get("parser_warnings") or []
+    if not isinstance(parser_warnings, list):
+        parser_warnings = []
+    parser_warnings = [str(item) for item in parser_warnings if item]
+    if not summary:
+        _append_unique(parser_warnings, "missing summary")
+    if not findings:
+        _append_unique(parser_warnings, "missing findings")
+    if parser_warnings and status == "completed":
+        status = "blocked"
+
     requested_context = decision.get("requested_context") or []
     if not isinstance(requested_context, list):
         requested_context = []
-    return ReviewResult(
-        status=status,
-        context_sufficient=bool(decision.get("context_sufficient", status != "blocked")),
-        message=str(decision.get("message") or "task processed"),
-        requested_context=requested_context,
-        downstream_result_ref=decision.get("downstream_result_ref"),
-        raw_response=decision.get("raw_response") if isinstance(decision.get("raw_response"), dict) else {},
+    context_sufficient = bool(decision.get("context_sufficient", status != "blocked")) and not parser_warnings
+    message = str(
+        decision.get("message")
+        or summary
+        or f"invalid_model_output: {', '.join(parser_warnings)}"
     )
+    return {
+        "status": status,
+        "context_sufficient": context_sufficient,
+        "summary": summary,
+        "findings": findings,
+        "checked_context": checked_context,
+        "remaining_questions": remaining_questions,
+        "parser_warnings": parser_warnings,
+        "message": message,
+        "requested_context": requested_context,
+        "downstream_result_ref": decision.get("downstream_result_ref"),
+    }
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)

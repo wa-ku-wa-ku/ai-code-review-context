@@ -26,6 +26,11 @@ class ReviewResult:
     status: str
     context_sufficient: bool
     message: str
+    summary: str = ""
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    checked_context: list[str] = field(default_factory=list)
+    remaining_questions: list[str] = field(default_factory=list)
+    parser_warnings: list[str] = field(default_factory=list)
     requested_context: list[dict[str, Any]] = field(default_factory=list)
     downstream_result_ref: str | None = None
     raw_response: dict[str, Any] = field(default_factory=dict)
@@ -127,6 +132,7 @@ class LLMReviewClient:
             raise ValueError(f"unsupported provider: {self._config.provider}")
         decision = _parse_decision_content(content)
         decision["raw_response"] = payload
+        decision["raw_content"] = content
         return decision
 
     def _call_openai_compatible(self, prompt: str) -> dict[str, Any]:
@@ -225,6 +231,13 @@ def _build_action_prompt(
         "related_context": related_context,
         "trace_so_far": trace,
         "available_tools": available_tools,
+        "tool_parameter_contract": _tool_parameter_contract(),
+        "output_rule": (
+            "Return exactly one JSON object. Do not wrap the object inside a top-level "
+            "'call_tool' or 'final' key. For tool use, the top-level object itself must "
+            "contain action='call_tool'. For final answer, the top-level object itself "
+            "must contain action='final'."
+        ),
         "allowed_tool_names": [
             "get_related_context",
             "get_file_snippet",
@@ -236,20 +249,90 @@ def _build_action_prompt(
             "call_tool": {
                 "action": "call_tool",
                 "tool_name": "one allowed tool name",
-                "tool_args": "JSON object arguments",
+                "tool_args": "JSON object arguments. Omit repo_id, task_id, review_dimension, and tags; the agent fills them.",
                 "reason": "why this tool is needed",
             },
             "final": {
                 "action": "final",
                 "status": "completed or blocked",
                 "context_sufficient": "true or false",
-                "message": "final functional-logic conclusion or blocking reason",
+                "summary": "concrete functional-logic conclusion based only on checked context",
+                "findings": [
+                    {
+                        "title": "short finding title",
+                        "severity": "low, medium, high, or info",
+                        "evidence": {
+                            "file_path": "file that was actually inspected",
+                            "symbol_name": "symbol that was actually inspected",
+                            "line_range": "line range if known",
+                        },
+                        "reasoning": "why this is a functional-logic issue or why it is acceptable",
+                        "recommendation": "what should be changed or checked next",
+                    }
+                ],
+                "checked_context": "array of context sources used, for example task_package, graph_slice, file_snippet:path:1-80",
+                "remaining_questions": "array of unresolved questions",
+                "message": "optional short final message; summary is preferred",
                 "requested_context": "array, empty unless blocked",
                 "downstream_result_ref": "optional string or null",
             },
         },
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _tool_parameter_contract() -> dict[str, Any]:
+    """告诉模型哪些参数它可以决定，哪些参数由 agent 自动补齐。
+
+    这里的契约故意比真实 REST 接口更窄：模型只表达上下文读取意图，跨接口公共参数和
+    任务默认目标由 FunctionLogicAgent 补齐，避免模型自己拼错 repo_id/task_id 等运行时参数。
+    """
+
+    auto_filled_by_agent = ["repo_id", "task_id", "review_dimension", "tags"]
+    return {
+        "agent_auto_fills": auto_filled_by_agent,
+        "get_related_context": {
+            "model_may_provide": ["target_file", "max_depth", "max_files"],
+            "defaults": {
+                "target_file": "task target file",
+                "max_depth": 1,
+                "max_files": 3,
+            },
+            "use_when": "Need a broader task-local context bundle for the current target file.",
+        },
+        "get_file_snippet": {
+            "model_may_provide": ["file_path", "start_line", "end_line"],
+            "defaults": {
+                "file_path": "task target file",
+                "start_line": 1,
+                "end_line": 80,
+            },
+            "use_when": "Need source lines from a known file path.",
+        },
+        "get_node_detail": {
+            "model_may_provide": ["node_id", "symbol_name"],
+            "defaults": {
+                "symbol_name": "first target symbol from task package",
+            },
+            "use_when": "Need the definition and metadata for a specific function, class, or method.",
+        },
+        "get_callees": {
+            "model_may_provide": ["node_id", "symbol_name", "depth"],
+            "defaults": {
+                "symbol_name": "first target symbol from task package",
+                "depth": 1,
+            },
+            "use_when": "Need downstream functions called by a target symbol.",
+        },
+        "get_callers": {
+            "model_may_provide": ["node_id", "symbol_name", "depth"],
+            "defaults": {
+                "symbol_name": "first target symbol from task package",
+                "depth": 1,
+            },
+            "use_when": "Need upstream functions that call a target symbol.",
+        },
+    }
 
 
 def _extract_openai_content(payload: dict[str, Any]) -> str:
@@ -304,6 +387,7 @@ def _parse_decision_content(content: str) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         data = {"message": str(data)}
+    data = _unwrap_decision_object(data)
     action = str(data.get("action") or "final")
     if action == "call_tool":
         tool_args = data.get("tool_args") or {}
@@ -318,12 +402,53 @@ def _parse_decision_content(content: str) -> dict[str, Any]:
     requested_context = data.get("requested_context") or []
     if not isinstance(requested_context, list):
         requested_context = []
+    findings = data.get("findings") or []
+    if not isinstance(findings, list):
+        findings = []
+    checked_context = data.get("checked_context") or []
+    if not isinstance(checked_context, list):
+        checked_context = []
+    remaining_questions = data.get("remaining_questions") or []
+    if not isinstance(remaining_questions, list):
+        remaining_questions = []
+    parser_warnings: list[str] = []
+    summary = str(data.get("summary") or "").strip()
+    if not summary:
+        parser_warnings.append("missing summary")
+    if not findings:
+        parser_warnings.append("missing findings")
     status = str(data.get("status") or "completed")
+    if parser_warnings and status == "completed":
+        status = "blocked"
     return {
         "action": "final",
         "status": status,
-        "context_sufficient": bool(data.get("context_sufficient", status != "blocked")),
-        "message": str(data.get("message") or "task processed"),
+        "context_sufficient": bool(data.get("context_sufficient", status != "blocked")) and not parser_warnings,
+        "summary": summary,
+        "findings": findings,
+        "checked_context": checked_context,
+        "remaining_questions": remaining_questions,
+        "parser_warnings": parser_warnings,
+        "message": str(data.get("message") or summary or f"invalid_model_output: {', '.join(parser_warnings)}"),
         "requested_context": requested_context,
         "downstream_result_ref": data.get("downstream_result_ref"),
     }
+
+
+def _unwrap_decision_object(data: dict[str, Any]) -> dict[str, Any]:
+    """兼容模型把示例 schema 当成外层 key 的情况。
+
+    Prompt 里给了 call_tool/final 两种形状，有些模型会返回
+    {"call_tool": {...}} 或 {"final": {...}}。这里把它拆成真正的决策对象，
+    防止明明想调工具却被误解析成 final。
+    """
+
+    if "action" in data:
+        return data
+    wrapped_call_tool = data.get("call_tool")
+    if isinstance(wrapped_call_tool, dict):
+        return wrapped_call_tool
+    wrapped_final = data.get("final")
+    if isinstance(wrapped_final, dict):
+        return wrapped_final
+    return data

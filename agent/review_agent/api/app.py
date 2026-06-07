@@ -283,8 +283,10 @@ _AGENT_DEMO_HTML = """
           <div>dimension</div><div>${html(data.review_dimension || "-")}</div>
           <div>status</div><div>${html(data.final_result?.status || "-")}</div>
           <div>sufficient</div><div>${html(data.final_result?.context_sufficient ?? "-")}</div>
+          <div>findings</div><div>${html((data.final_result?.findings || []).length)}</div>
+          <div>warnings</div><div>${html((data.final_result?.parser_warnings || []).join(", ") || "-")}</div>
         </div>
-        <div class="box small" style="margin:10px 0 0">${html(data.final_result?.message || "-")}</div>
+        <div class="box small" style="margin:10px 0 0">${html(data.final_result?.summary || data.final_result?.message || "-")}</div>
       `;
     }
 
